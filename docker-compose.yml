@@ -1,0 +1,104 @@
+services:
+  encoreum:
+    build: .
+    image: encoreum:local
+    container_name: encoreum
+    # A real PID 1 to reap orphans. uvicorn doesn't, and each cancelled page
+    # capture leaves Chromium's helper processes behind as zombies without this.
+    init: true
+    ports:
+      # host:container   -- open http://<host>:8681 in your browser.
+      # (Container always listens on 8080; only change the left number.)
+      - "8681:8080"
+    environment:
+      # PUID/PGID = the host user that owns your media library.
+      # On the host that is your-user -> run `id -u` and `id -g` to confirm (1000/1000).
+      - PUID=1000
+      - PGID=1000
+      - TZ=America/New_York
+      # Comma-separated write-whitelist. The app refuses to write anywhere else.
+      - ALLOWED_ROOTS=/library
+      # Default destination subfolder (change/save it live in the web UI).
+      - DEFAULT_DEST=concerts
+      # Artist lookup for festival schedules. Both OPTIONAL: without them the
+      # lookup degrades to "could not identify this artist" rather than failing.
+      # Put real values in .env (gitignored) — never inline them here.
+      #   LIDARR_API_KEY  from Lidarr > Settings > General
+      #   PLEX_TOKEN      from Plex Preferences.xml (PlexOnlineToken)
+      - LIDARR_URL=${LIDARR_URL:-http://172.17.0.1:8686}
+      - PLEX_URL=${PLEX_URL:-http://172.17.0.1:32400}
+      # NO credentials here. Every one is a docker secret, declared at the
+      # bottom of this file and read from /run/secrets/ by app/secrets.py.
+      #
+      # An env var credential is printed in full by `docker inspect`, so anyone
+      # in the docker group has it, and it is inherited by every child process —
+      # this app spawns yt-dlp, streamlink and ffmpeg, so a token set here ends
+      # up in all of their environments too.
+      - PLEX_TOKEN_FILE=/run/secrets/plex_token
+      - LIDARR_API_KEY_FILE=/run/secrets/lidarr_api_key
+      - LIBRARY_NAME=${LIBRARY_NAME:-the Plex server}
+      # Where hand-uploaded taper archives are picked up, and where approved
+      # ones are written. Nothing in INGEST_DIR is visible to Plex — an upload
+      # only becomes a library album once a person has approved the match.
+      - INGEST_DIR=/ingest
+      - LIVE_AUDIO_DIR=${LIVE_AUDIO_DIR:-/library/live-music}
+      # OPTIONAL. Without a key, captures keep their basic metadata and
+      # setlists can be pasted in by hand — nothing degrades. See .env.example.
+      #
+      # The key comes from the docker secret declared at the bottom of this
+      # file, NOT from this variable. The env var is left as a fallback for
+      # anyone running without secrets; prefer the secret, because an env var is
+      # readable via `docker inspect` and is inherited by every child process —
+      # and this app spawns yt-dlp and streamlink as children.
+      - SETLISTFM_API_KEY_FILE=/run/secrets/setlistfm_api_key
+      # Page audio capture blocks private addresses, since a web page is
+      # untrusted input. List your own servers here to allow them, for jobs whose
+      # page is on this list. '.example.com' also matches subdomains. See .env.example.
+      - PAGE_CAPTURE_ALLOW_HOSTS=${PAGE_CAPTURE_ALLOW_HOSTS:-}
+      # 1 if Chromium's sandbox can't start in this container. See README.
+      - CHROMIUM_NO_SANDBOX=${CHROMIUM_NO_SANDBOX:-}
+    volumes:
+      # LEFT side = your media library root ($MEDIADIR1 from the the host .env,
+      # defaults to /mnt/nas/media). The whole root is mounted so you can target
+      # any subfolder (concerts, tv, tv-podcasts, ...) chosen in the UI.
+      - ${MEDIADIR1:-/mnt/nas/media}:/library
+      # Podcasts preset: $PODCASTSDIR is a SEPARATE top-level host path (not
+      # under $MEDIADIR1, unlike audiobooks/live-music), so it's nested INSIDE
+      # the /library mount at build time rather than as its own ALLOWED_ROOTS
+      # entry -- this way "podcasts" is just an ordinary destination subfolder
+      # from config.safe_join()'s point of view, no code changes needed.
+      - ${PODCASTSDIR:-/mnt/nas/podcasts}:/library/podcasts
+      # Drop taper folders or zips in here. Deliberately OUTSIDE the library
+      # mount: a half-copied upload or a wrong match must never be something
+      # Plex can see. Approved imports are copied out to LIVE_AUDIO_DIR.
+      - ${INGEST_DIR:-./ingest}:/ingest
+      # Job history, live logs, per-show download-archives, and the yt-dlp venv.
+      - ./config:/config
+    secrets:
+      - setlistfm_api_key
+      - plex_token
+      - lidarr_api_key
+    # gid 985 = encoreum-secret. Under plain Compose (not Swarm) a secret keeps
+    # the HOST file's ownership and mode — uid/gid/mode keys are Swarm-only and
+    # silently ignored — and this container drops to PUID via gosu, not root.
+    #
+    # The host file is root:encoreum-secret 0640: this container can read it and
+    # nothing else can. The alternative of owning it 1000:1000 also "works", but
+    # leans on the secrets DIRECTORY being unreadable rather than on the file
+    # itself, so it fails open the day those directory permissions change.
+    group_add:
+      - "${SECRET_GID:-985}"   # gid of the group that owns the secret files (.env SECRET_GID)
+    restart: unless-stopped
+
+secrets:
+  # root:encoreum-secret 0640, matching how smtp_password is handled in the the host
+  # stack: a dedicated system group per secret, granted to exactly one container
+  # via group_add. The container reads it at /run/secrets/, the host file is
+  # never owned by the operator account, and no container is made root to get at
+  # it.
+  setlistfm_api_key:
+    file: ${SECRETS_DIR:-./secrets}/encoreum_setlist_fm_api_key
+  plex_token:
+    file: ${SECRETS_DIR:-./secrets}/encoreum_plex_token
+  lidarr_api_key:
+    file: ${SECRETS_DIR:-./secrets}/encoreum_lidarr_api_key

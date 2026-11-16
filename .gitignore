@@ -1,0 +1,16 @@
+config/
+__pycache__/
+*.pyc
+*.log
+# never commit downloaded media or cookies
+*.mkv
+*.mp4
+*.webm
+*.info.json
+
+# local compose overrides (paths only, but keep local)
+.env
+
+# hand-dropped taper uploads; contents are never committed
+ingest/*
+!ingest/.gitkeep

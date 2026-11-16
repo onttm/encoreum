@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sponsors — Encoreum</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='88'>🎸</text></svg>">
+  <link rel="stylesheet" href="/static/app.css">
+  <style>
+    /* Only what the shared sheet does not already cover. */
+    .q { margin: 1.2rem 0 2rem; }
+    .q > h2 { margin: 0 0 .35rem; font-size: 1.05rem; }
+    .bar { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; margin: .8rem 0; }
+    .bar input { flex: 1 1 12rem; min-width: 8rem; }
+    .item { border: 1px solid var(--line); border-radius: 8px; padding: .8rem 1rem; margin: .55rem 0; }
+    .item h3 { margin: 0 0 .25rem; font-size: .98rem; font-weight: 600; overflow-wrap: anywhere; }
+    .segs { font-size: .88rem; margin: .35rem 0; }
+    .acts { display: flex; gap: .45rem; flex-wrap: wrap; align-items: center; margin-top: .55rem; }
+    .msg { font-size: .88rem; }
+    .msg.bad { color: #ffb454; }
+    .badge.good { background: rgba(120,220,160,.16); color: #9be3bd; }
+    .badge.warn { background: rgba(255,190,80,.18); color: #ffce88; }
+    .confirm { border: 1px solid #ffb454; border-radius: 8px; padding: .7rem .9rem; margin: .6rem 0; }
+    .empty { font-style: italic; padding: .6rem 0; }
+  </style>
+</head>
+<body>
+<header class="site">
+  <div class="wrap">
+    <h1>🎸 Encoreum</h1>
+    <div class="ver"><a class="btn ghost sm" href="/">← Downloads</a></div>
+  </div>
+</header>
+
+<main class="wrap">
+  <section class="q">
+    <h2>Sponsor segments in the library</h2>
+    <p class="dim">Looks up every downloaded video on SponsorBlock (using the YouTube ID in its
+      <code>.info.json</code>) and lists the ones where viewers have flagged a sponsor read or
+      self-promotion. <b>Add marks</b> writes those spots into the file as chapters, like
+      <code>[SponsorBlock]: Sponsor</code>. Nothing is cut and nothing is re-downloaded. The
+      file's original chapter list is saved first, so <b>Undo</b> puts it back exactly.</p>
+    <p class="dim">Plex can't show a Skip button for these. You jump past them from the chapter
+      list. If an ad sits inside a song's chapter, that chapter is split around it.</p>
+    <form class="bar" id="scanForm">
+      <label class="dim" for="dest">Destination</label>
+      <input id="dest" name="destination" value="{{ destination }}" autocomplete="off">
+      <button class="btn" id="scanBtn" type="submit">Scan</button>
+    </form>
+    <p class="notice" id="status">Loading…</p>
+    <div id="bulk"></div>
+    <div id="results"></div>
+    <p class="dim sub">{{ attribution }}. Lookups send only a 4-character hash prefix of each
+      video ID, so SponsorBlock can't tell which videos are in this library.</p>
+  </section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => (
+  {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const fmtT = s => { s = Math.round(s); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = String(s % 60).padStart(2, "0");
+  return h ? `${h}:${String(m).padStart(2, "0")}:${x}` : `${m}:${x}`; };
+const CAT = {sponsor: "Sponsor", selfpromo: "Self-promotion"};
+let scan = null, poll = null, busy = false;
+
+async function post(url, data) {
+  const r = await fetch(url, {method: "POST", body: new URLSearchParams(data || {})});
+  let j = null; try { j = await r.json(); } catch (e) {}
+  if (!r.ok) return {ok: false, message: (j && j.detail) || r.statusText};
+  return j;
+}
+
+function card(f, i) {
+  const segs = f.segments.map(s => `${CAT[s.category] || esc(s.category)} ${fmtT(s.start)}–${fmtT(s.end)}`).join(" · ");
+  const state = f.marked ? `<span class="badge good">marked</span>`
+              : !f.markable ? `<span class="badge warn">can't mark this file type</span>` : "";
+  const split = f.split_songs ? `<span class="dim"> · splits ${f.split_songs} chapter(s)</span>` : "";
+  const chs = f.chapters ? `${f.chapters} chapters now` : "no chapters now";
+  return `<div class="item" id="f${i}">
+    <h3>${esc(f.name)}</h3>
+    <div class="dim">${esc(f.show)} · ${chs}${split} ${state}</div>
+    <div class="segs">${segs}</div>
+    <div class="acts">
+      ${!f.marked && f.markable ? `<button class="btn sm" data-act="apply" data-i="${i}">Add marks</button>` : ""}
+      ${f.can_undo ? `<button class="btn ghost sm" data-act="undo" data-i="${i}">Undo</button>` : ""}
+      <a class="btn ghost sm" href="https://www.youtube.com/watch?v=${encodeURIComponent(f.video_id)}" target="_blank" rel="noopener">YouTube ↗</a>
+      <span class="msg" id="m${i}"></span>
+    </div></div>`;
+}
+
+function render() {
+  const s = scan || {};
+  const st = $("status");
+  const f = s.findings || [];
+  if (s.state === "running") {
+    st.className = "notice";
+    st.textContent = `Scanning ${s.destination}… ${s.checked} of ${s.total || "?"} video(s) checked, ${f.length} with segments so far.`;
+  } else if (s.state === "done") {
+    const when = s.finished ? new Date(s.finished * 1000).toLocaleString() : "";
+    st.className = "notice";
+    st.textContent = `Scanned ${s.destination} ${when}: ${s.total} video(s) checked, ${f.length} with sponsor segments` +
+      (s.failed ? `, ${s.failed} couldn't be checked (service down or budget spent; scan again later)` : "") +
+      (s.skipped_no_id ? `. ${s.skipped_no_id} file(s) skipped: no YouTube ID in an .info.json` : "") + ".";
+  } else if (s.state === "error") {
+    st.className = "notice bad"; st.textContent = "Scan failed: " + (s.error || "unknown error");
+  } else if (s.state === "interrupted") {
+    st.className = "notice bad"; st.textContent = "The last scan was interrupted by a restart. Scan again.";
+  } else {
+    st.className = "notice"; st.textContent = "No scan yet. Pick a destination and press Scan.";
+  }
+  const todo = f.filter(x => !x.marked && x.markable);
+  $("bulk").innerHTML = (s.state === "done" && todo.length > 1)
+    ? `<div class="bar"><button class="btn ghost" id="allBtn" type="button">Add marks to all ${todo.length}</button></div>` : "";
+  if ($("allBtn")) $("allBtn").onclick = confirmAll;
+  $("results").innerHTML = f.length ? f.map(card).join("")
+    : (s.state === "done" ? `<p class="dim empty">Nothing found. Most full-concert uploads have no sponsor reads.</p>` : "");
+  $("scanBtn").disabled = s.state === "running" || busy;
+}
+
+function confirmAll() {
+  const todo = (scan.findings || []).filter(x => !x.marked && x.markable).length;
+  $("bulk").innerHTML = `<div class="confirm">Rewrite the chapter list of ${todo} file(s)? Each one is
+    copied once (a few seconds to a minute per file), the originals' chapters are saved for Undo,
+    and nothing is cut.
+    <div class="acts"><button class="btn" id="goAll" type="button">Yes, add marks</button>
+    <button class="btn ghost" id="noAll" type="button">Cancel</button></div></div>`;
+  $("noAll").onclick = render;
+  $("goAll").onclick = runAll;
+}
+
+async function act(kind, i) {
+  const f = scan.findings[i], m = $("m" + i);
+  m.className = "msg"; m.textContent = kind === "apply" ? "Adding marks…" : "Restoring…";
+  document.querySelectorAll(`#f${i} button`).forEach(b => b.disabled = true);
+  const r = await post(`/api/sponsors/${kind}`, {path: f.path});
+  if (r && r.ok) {
+    if (kind === "apply" && !/nothing changed/.test(r.message)) { f.marked = true; f.can_undo = true; }
+    if (kind === "apply" && /Already has/.test(r.message)) f.marked = true;
+    if (kind === "undo") { f.marked = false; f.can_undo = false; }
+    $("f" + i).outerHTML = card(f, i);
+    $("m" + i).textContent = r.message;
+  } else {
+    m.className = "msg bad"; m.textContent = (r && r.message) || "Failed.";
+    document.querySelectorAll(`#f${i} button`).forEach(b => b.disabled = false);
+  }
+  return r && r.ok;
+}
+
+async function runAll() {
+  busy = true;
+  const idx = scan.findings.map((f, i) => (!f.marked && f.markable) ? i : -1).filter(i => i >= 0);
+  let n = 0, bad = 0;
+  for (const i of idx) {
+    $("bulk").innerHTML = `<p class="notice">Adding marks… ${n} of ${idx.length} done${bad ? `, ${bad} failed` : ""}.</p>`;
+    if (!(await act("apply", i))) bad++;
+    n++;
+  }
+  busy = false;
+  render();
+  $("bulk").innerHTML = `<p class="notice">Done: ${n - bad} of ${idx.length} file(s) marked${bad ? `, ${bad} failed (see each item)` : ""}.</p>`;
+}
+
+document.addEventListener("click", e => {
+  const b = e.target.closest("button[data-act]");
+  if (b) act(b.dataset.act, +b.dataset.i);
+});
+
+async function refresh() {
+  try { scan = await (await fetch("/api/sponsors/scan")).json(); } catch (e) { return; }
+  if (!busy) render();
+  clearTimeout(poll);
+  if (scan.state === "running") poll = setTimeout(refresh, 1500);
+}
+
+$("scanForm").addEventListener("submit", async e => {
+  e.preventDefault();
+  const r = await post("/api/sponsors/scan", {destination: $("dest").value});
+  if (!r || r.ok === false) { $("status").className = "notice bad"; $("status").textContent = (r && r.message) || "Couldn't start the scan."; return; }
+  refresh();
+});
+refresh();
+</script>
+</body>
+</html>

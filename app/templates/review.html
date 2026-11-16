@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Review — Encoreum</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='88'>🎸</text></svg>">
+  <link rel="stylesheet" href="/static/app.css">
+  <style>
+    /* Only what the shared sheet does not already cover. */
+    .q { margin: 1.4rem 0 2.4rem; }
+    .q > h2 { margin: 0 0 .35rem; font-size: 1.05rem; }
+    .q > .dim { margin: 0 0 .9rem; }
+    .item { border: 1px solid var(--line, #2a2f3a); border-radius: 8px;
+            padding: .85rem 1rem; margin: .55rem 0; }
+    .item h3 { margin: 0 0 .2rem; font-size: .98rem; font-weight: 600; }
+    .why { margin: .5rem 0; padding: .5rem .7rem; border-radius: 6px;
+           background: rgba(255,190,80,.09); border: 1px solid rgba(255,190,80,.3);
+           font-size: .86rem; line-height: 1.45; }
+    .ok  { background: rgba(120,220,160,.08); border-color: rgba(120,220,160,.3); }
+    .checks { list-style: none; margin: .5rem 0 0; padding: 0; font-size: .82rem; }
+    .checks li { padding: .12rem 0; }
+    .checks .no  { color: #ffb454; }
+    .checks .yes { opacity: .62; }
+    .tracks { font-size: .82rem; margin: .5rem 0 0; padding-left: 1.15rem;
+              max-height: 12rem; overflow: auto; }
+    .acts { display: flex; gap: .45rem; flex-wrap: wrap; margin-top: .7rem;
+            align-items: center; }
+    .fixrow { display: flex; gap: .4rem; flex-wrap: wrap; margin-top: .55rem; }
+    .fixrow input { flex: 1 1 9rem; min-width: 7rem; }
+    .empty { opacity: .6; font-style: italic; padding: .6rem 0; }
+    .badge.warn { background: rgba(255,190,80,.18); color: #ffce88; }
+    .badge.good { background: rgba(120,220,160,.16); color: #9be3bd; }
+  </style>
+</head>
+<body>
+<header class="site">
+  <div class="wrap">
+    <h1>🎸 Encoreum</h1>
+    <div class="ver"><a class="btn ghost sm" href="/">← Downloads</a></div>
+  </div>
+</header>
+
+<main class="wrap">
+  <p class="notice" id="status">Loading…</p>
+
+  <!-- Uploads: a manual upload NEVER auto-imports, whatever the confidence. -->
+  <section class="q" id="q-imports">
+    <h2>Uploads waiting for you <span class="badge" id="n-imports">0</span></h2>
+    <p class="dim">Dropped in the ingest folder. Nothing here has been written to
+      the library — a hand-uploaded archive always waits for a person, at any
+      confidence, because a <em>confident wrong match</em> is exactly what review
+      is for.</p>
+    <div id="imports"></div>
+  </section>
+
+  <!-- Captures: a setlist was found but is not certain enough to apply. -->
+  <section class="q" id="q-captures">
+    <h2>Setlists to confirm <span class="badge" id="n-captures">0</span></h2>
+    <p class="dim">A setlist was found but something about it is not certain, so
+      it is being held rather than written. Confirming records that you vouched
+      for it; declining remembers the exact version, so a later correction is
+      still offered.</p>
+    <div id="captures"></div>
+  </section>
+
+  <section class="q">
+    <h2>Recordings with no setlist <span class="badge" id="n-unmatched">0</span></h2>
+    <p class="dim">Not a problem to fix — most live recordings never get a
+      setlist written up, and these are complete and playable without one.
+      Automatic polling stops a week after the show.</p>
+    <div id="unmatched"></div>
+  </section>
+</main>
+
+<script>
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => (
+  {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+async function post(url, data) {
+  const body = new URLSearchParams(data || {});
+  const r = await fetch(url, {method: "POST", body});
+  if (!r.ok) {
+    let msg = r.statusText;
+    try { msg = (await r.json()).detail || msg; } catch (e) {}
+    alert(msg);
+    return null;
+  }
+  return r.json();
+}
+
+function checksHtml(report) {
+  if (!report || !report.checks) return "";
+  return `<ul class="checks">` + report.checks.map(c =>
+    `<li class="${c.ok ? "yes" : "no"}">${c.ok ? "✓" : "✗"} ${esc(c.detail)}</li>`
+  ).join("") + `</ul>`;
+}
+
+function importCard(d) {
+  const e = d.effective || {};
+  const a = (d.proposed && d.proposed.alignment) || {};
+  const corrected = (d.corrected_fields || []).length
+    ? `<span class="badge good">you corrected: ${d.corrected_fields.join(", ")}</span>` : "";
+  const tracks = ((a.mapping) || []).map(m =>
+    `<li>${esc(m.title)}${m.segue_into_next ? " &gt;" : ""}</li>`).join("");
+  return `<div class="item">
+    <h3>${esc(e.artist || "(unknown artist)")} — ${esc(e.date || "(no date)")}</h3>
+    <div class="dim">${esc(e.venue || "")} ${e.city ? "· " + esc(e.city) : ""}
+      ${e.source_type ? "· " + esc(e.source_type) : ""}</div>
+    <div class="why ${a.confidence === "exact" ? "ok" : ""}">
+      <b>${esc((a.confidence || "unknown").toUpperCase())}</b> — ${esc(a.reason || d.error || "")}
+    </div>
+    ${corrected}
+    ${tracks ? `<ol class="tracks">${tracks}</ol>` : ""}
+    <div class="fixrow">
+      <input placeholder="artist"  id="ia-${d.id}" value="${esc(e.artist || "")}">
+      <input placeholder="date"    id="id-${d.id}" value="${esc(e.date || "")}">
+      <input placeholder="venue"   id="iv-${d.id}" value="${esc(e.venue || "")}">
+    </div>
+    <div class="acts">
+      <button class="btn ghost sm" onclick="fixImport('${d.id}')">Fix match</button>
+      <button class="btn sm" onclick="approve('${d.id}')">Approve &amp; import</button>
+      <button class="btn ghost sm" onclick="rejectImport('${d.id}')">Reject</button>
+      <span class="dim">${esc(d.path || "")}</span>
+    </div></div>`;
+}
+
+function captureCard(d) {
+  const e = d.effective || {};
+  const p = d.proposed_setlist || {};
+  const tracks = (p.tracks || []).map(t =>
+    `<li>${esc(t.title)}${t.cover_of ? ` (${esc(t.cover_of)} cover)` : ""}</li>`).join("");
+  return `<div class="item">
+    <h3>${esc(e.artist || "")} — ${esc(e.performance_date || "")}</h3>
+    <div class="dim">${esc(e.festival || "")} ${e.stage ? "· " + esc(e.stage) : ""}
+      ${e.venue ? "· " + esc(e.venue) : ""}${d.track_count ? ` · ${d.track_count} tracks` : ""}</div>
+    <div class="why"><b>${esc((d.match_report || {}).confidence || "").toUpperCase()}</b>
+      — ${esc((d.match_report || {}).summary || d.last_reason || "")}</div>
+    ${checksHtml(d.match_report)}
+    ${p.song_count ? `<div class="dim" style="margin-top:.5rem">Proposed setlist,
+      ${p.song_count} songs${p.tour ? " · " + esc(p.tour) : ""}
+      ${p.url ? ` · <a href="${esc(p.url)}" target="_blank" rel="noopener">setlist.fm</a>` : ""}</div>` : ""}
+    ${tracks ? `<ol class="tracks">${tracks}</ol>` : ""}
+    <div class="acts">
+      <button class="btn sm" onclick="confirmSet('${d.id}')">Confirm setlist</button>
+      <button class="btn ghost sm" onclick="declineSet('${d.id}')">Decline</button>
+    </div></div>`;
+}
+
+function unmatchedCard(d) {
+  const e = d.effective || {};
+  return `<div class="item">
+    <h3>${esc(e.artist || "")} — ${esc(e.performance_date || "")}</h3>
+    <div class="dim">${esc(d.state_label || "")}</div>
+    <div class="acts">
+      <button class="btn ghost sm" onclick="enrichOne('${d.id}')">Look now</button>
+      <button class="btn ghost sm" onclick="pasteSet('${d.id}')">Paste a setlist</button>
+    </div></div>`;
+}
+
+async function load() {
+  const st = document.getElementById("status");
+  try {
+    const [imp, caps, un] = await Promise.all([
+      fetch("/api/imports?status=pending").then(r => r.json()),
+      fetch("/api/captures?state=review").then(r => r.json()),
+      fetch("/api/captures/unmatched").then(r => r.json()),
+    ]);
+    const impItems = imp.imports || [];
+    const capItems = caps.captures || [];
+    // "needs a setlist" excludes the ones already queued for confirmation, or
+    // the same recording appears in two lists and looks like two problems.
+    const unItems = (un.captures || []).filter(c => c.state !== "review");
+
+    document.getElementById("n-imports").textContent = impItems.length;
+    document.getElementById("n-captures").textContent = capItems.length;
+    document.getElementById("n-unmatched").textContent = unItems.length;
+    document.getElementById("imports").innerHTML =
+      impItems.length ? impItems.map(importCard).join("")
+                      : `<p class="empty">Nothing waiting.</p>`;
+    document.getElementById("captures").innerHTML =
+      capItems.length ? capItems.map(captureCard).join("")
+                      : `<p class="empty">Nothing to confirm.</p>`;
+    document.getElementById("unmatched").innerHTML =
+      unItems.length ? unItems.map(unmatchedCard).join("")
+                     : `<p class="empty">Every recording has a setlist.</p>`;
+
+    const lk = (caps.stats || {}).lookup || {};
+    st.textContent = `setlist.fm: ${lk.detail || "unknown"}`;
+    st.className = "notice";
+  } catch (e) {
+    st.textContent = "Could not load the queues: " + e;
+  }
+}
+
+async function fixImport(id) {
+  const g = k => document.getElementById(k + "-" + id).value;
+  if (await post(`/api/imports/${id}/fix`,
+                 {artist: g("ia"), date: g("id"), venue: g("iv")})) load();
+}
+async function approve(id) {
+  if (!confirm("Write this into the library?")) return;
+  if (await post(`/api/imports/${id}/approve`, {})) load();
+}
+async function rejectImport(id) {
+  const reason = prompt("Why? (optional)") ?? "";
+  if (await post(`/api/imports/${id}/reject`, {reason})) load();
+}
+async function confirmSet(id) {
+  if (await post(`/api/captures/${id}/confirm`, {})) load();
+}
+async function declineSet(id) {
+  const reason = prompt("Why is this the wrong setlist? (optional)") ?? "";
+  if (await post(`/api/captures/${id}/decline`, {reason})) load();
+}
+async function enrichOne(id) {
+  if (await post(`/api/captures/${id}/enrich`, {})) load();
+}
+async function pasteSet(id) {
+  const text = prompt("Paste the setlist, one song per line:");
+  if (!text) return;
+  if (await post(`/api/captures/${id}/setlist`, {text})) load();
+}
+
+load();
+setInterval(load, 60000);
+</script>
+</body>
+</html>

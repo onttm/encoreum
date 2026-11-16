@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Job {{ job.id }} — Encoreum</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='88'>🎸</text></svg>">
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<header class="site">
+  <div class="wrap"><h1><a href="/">🎸 Encoreum</a></h1></div>
+</header>
+
+<main class="wrap">
+  <section class="card">
+    <div class="jobhead">
+      <div>
+        <h2>{{ job.show }}{% if job.chunk_label %} <small class="dim">({{ job.chunk_label }})</small>{% endif %} <span class="badge" id="statusBadge">{{ job.status }}</span></h2>
+        <p class="dim">
+          {{ job.naming }} · created {{ job.created }} · id <code>{{ job.id }}</code><br>
+          → <code>{{ job.show_dir }}</code>
+        </p>
+        {% if job.chunk_siblings %}
+        <p class="dim sub">
+          Playlist split into {{ job.chunk_siblings|length }} parts (auto-chunked, runs sequentially):
+          <span class="chunk-nav">{% for s in job.chunk_siblings %}<a href="/jobs/{{ s.id }}" title="{{ s.status }}" class="{{ 'current' if s.id == job.id }}">{{ s.index }}</a>{% endfor %}</span>
+        </p>
+        {% endif %}
+      </div>
+      <div class="jobactions">
+        <button type="button" id="cancelBtn" class="btn danger sm">Cancel</button>
+        <button type="button" id="retryBtn" class="btn ghost sm" hidden>Retry (skips items already downloaded)</button>
+        <a class="btn ghost sm" href="/">Back</a>
+      </div>
+    </div>
+  </section>
+
+  <section class="card" id="errorCard" hidden>
+    <h3>What went wrong</h3>
+    <div id="errorSummary"></div>
+  </section>
+
+  <section class="card">
+    <h3>Live log</h3>
+    <pre id="log" class="log">connecting…</pre>
+  </section>
+
+  <section class="card">
+    <h3>Output files</h3>
+    <ul id="files" class="files"><li class="dim">none yet</li></ul>
+  </section>
+</main>
+
+<script>
+const jobId = "{{ job.id }}";
+// NOTE: 'partial' was missing here (present in jobs.py's own TERMINAL set) --
+// without it a job that settled into 'partial' left Cancel clickable forever.
+const TERMINAL = ["done", "partial", "error", "cancelled", "interrupted"];
+const logEl = document.getElementById('log');
+const badge = document.getElementById('statusBadge');
+const retryBtn = document.getElementById('retryBtn');
+let firstLine = true;
+function esc(s) { return (s || '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+// --- live log via Server-Sent Events -------------------------------------
+const es = new EventSource(`/jobs/${jobId}/log`);
+es.onmessage = (ev) => {
+  if (firstLine) { logEl.textContent = ''; firstLine = false; }
+  logEl.textContent += ev.data + "\n";
+  logEl.scrollTop = logEl.scrollHeight;
+};
+es.addEventListener('end', (ev) => {
+  es.close();
+  setStatus(ev.data);
+});
+es.onerror = () => { /* browser auto-retries; ignore transient drops */ };
+
+function setStatus(s) {
+  badge.textContent = s;
+  badge.className = 'badge ' + s;
+  const finished = TERMINAL.includes(s);
+  if (finished) document.getElementById('cancelBtn').disabled = true;
+  // Retry makes sense for anything that finished WITHOUT full success --
+  // 'done' means it doesn't need one; still-running has nothing to retry yet.
+  retryBtn.hidden = !(finished && s !== 'done');
+}
+setStatus("{{ job.status }}");
+
+// --- cancel ---------------------------------------------------------------
+document.getElementById('cancelBtn').addEventListener('click', async (e) => {
+  e.target.disabled = true;
+  await fetch(`/jobs/${jobId}/cancel`, {method: 'POST'});
+});
+
+// --- retry ------------------------------------------------------------------
+// Deliberately just resubmits the same params -- yt-dlp's --download-archive
+// only ever records a video once it FULLY completes, so anything that failed
+// last time (never archived) gets attempted again, and anything that already
+// succeeded is skipped automatically. See jobs.retry_job().
+retryBtn.addEventListener('click', async () => {
+  retryBtn.disabled = true;
+  retryBtn.textContent = 'Starting retry…';
+  try {
+    const r = await fetch(`/jobs/${jobId}/retry`, {method: 'POST'});
+    if (r.redirected) { window.location.href = r.url; return; }
+  } catch { /* fall through to re-enable below */ }
+  retryBtn.disabled = false;
+  retryBtn.textContent = 'Retry (skips items already downloaded)';
+});
+
+// --- error summary ----------------------------------------------------------
+function renderErrorSummary(summary) {
+  const card = document.getElementById('errorCard');
+  if (!summary || !summary.total_errors) { card.hidden = true; return; }
+  card.hidden = false;
+  document.getElementById('errorSummary').innerHTML =
+    `<p class="dim sub">${summary.total_errors} error line(s) in the log:</p><ul class="files">` +
+    summary.distinct.map(d => `<li><b>${d.count}×</b> ${esc(d.message)}` +
+      (d.hint ? `<br><span class="dim sub">${esc(d.hint)}</span>` : '') + '</li>').join('') +
+    '</ul>';
+}
+
+// --- poll status + files --------------------------------------------------
+let finalPassDone = false;
+async function poll() {
+  try {
+    const r = await fetch(`/api/jobs/${jobId}`);
+    const j = await r.json();
+    setStatus(j.status);
+    const ul = document.getElementById('files');
+    if (j.files && j.files.length) {
+      ul.innerHTML = j.files.map(f => `<li><code>${f}</code></li>`).join('');
+    }
+    renderErrorSummary(j.error_summary);
+    if (!TERMINAL.includes(j.status)) {
+      setTimeout(poll, 3000);
+    } else if (!finalPassDone) {
+      finalPassDone = true;            // one last pass to catch final files
+      setTimeout(poll, 3000);
+    }
+  } catch { setTimeout(poll, 5000); }
+}
+poll();
+</script>
+</body>
+</html>

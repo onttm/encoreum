@@ -1,0 +1,1085 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Encoreum</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='88'>🎸</text></svg>">
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<header class="site">
+  <div class="wrap">
+    <h1>🎸 Encoreum</h1>
+    <a class="onair idle" id="onair" href="#" title="Click to view the running job's live log">
+      <span class="dot"></span><span id="onairtxt">Idle</span></a>
+    <div class="ver">
+      yt-dlp <code>{{ yt_dlp }}</code>
+      <a class="btn ghost sm" href="/review" id="reviewLink">Review</a>
+      <a class="btn ghost sm" href="/sponsors" title="Find sponsor segments in the library and mark them as chapters">Sponsors</a>
+      <button type="button" class="btn ghost sm" id="addonsBtn" aria-expanded="false" aria-controls="addonsPanel">Add-ons</button>
+      <button type="button" id="updateBtn" class="btn ghost sm">Update now</button>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+  <section class="card" id="addonsPanel" hidden>
+    <h2>Add-ons</h2>
+    <p class="dim sub">The core of this app is live music: concerts, live streams, setlists and taper uploads.
+      These extras use the same download engine for other kinds of audio. Switching one off hides it from
+      new downloads only; folders it already made, past jobs and retries keep working.</p>
+    {% for a in addons %}
+    <label class="chk"><input type="checkbox" class="addon-toggle" data-name="{{ a.name }}" {{ 'checked' if a.on }}>
+      <b>{{ a.label }}</b> <small>{{ a.blurb }}</small></label>
+    {% endfor %}
+    <p class="notice" id="addonsMsg"></p>
+  </section>
+
+  <div class="bmk-bar">
+    <a id="bmk" class="btn ghost sm" href="#" onclick="return false">🎸 Send to Encoreum</a>
+    <span class="hint"><b>Drag this to your bookmarks toolbar.</b> Then on any video or
+      <b>live-stream</b> page, click it to open Encoreum with that link loaded (live mode pre-selected).</span>
+  </div>
+
+  <section class="card">
+    <h2>New download</h2>
+    <form method="post" action="/jobs" class="grid" id="jobForm">
+      <label class="full">
+        <span>Playlist or video URL</span>
+        <div class="row">
+          <input type="url" name="url" required placeholder="https://www.youtube.com/playlist?list=...">
+          <button type="button" id="loadUrlBtn" class="btn">Load URL</button>
+          <button type="button" id="previewBtn" class="btn ghost gated" disabled>Preview (dry run)</button>
+        </div>
+        <small class="hint">Load the URL first — it unlocks the options below and fetches suggestions.</small>
+        <div class="recent" id="recent"></div>
+      </label>
+
+      <!-- Content type is the one thing the PERSON already knows before the
+           server has looked at anything -- Auto leaves it locked until Load
+           URL (today's behavior); Manual unlocks it immediately so it can be
+           set before loading. Drives the real "naming" <select> below. -->
+      <div class="full" id="typeMode">
+        <span class="dim sub">Content type — know it already?</span>
+        <div class="row">
+          <label class="chk sm"><input type="radio" name="typeMode" value="auto" id="typeModeAuto" checked> Auto <small>(figure it out after loading)</small></label>
+          <label class="chk sm"><input type="radio" name="typeMode" value="manual" id="typeModeManual"> Manual <small>(I already know)</small></label>
+        </div>
+        <div class="row" id="avToggle">
+          <button type="button" class="btn ghost sm av-btn active" data-av="video" disabled>Video</button>
+          <button type="button" class="btn ghost sm av-btn" data-av="audio" disabled>Audio</button>
+        </div>
+      </div>
+
+      <!-- Suggestion chips live right under the URL, not down by the file
+           list, so they're visible without scrolling past the whole form --
+           see CLAUDE.md "Preview suggestion chips". Populated by Preview. -->
+      <div class="full" id="suggestArea">
+        <p id="presetSuggest" class="notice" hidden></p>
+        <div class="suggest" id="showSuggest" hidden></div>
+      </div>
+
+      <label class="full">
+        <span>Destination folder <small>(under {{ library_root }})</small></span>
+        <div class="row">
+          <input type="text" name="destination" id="destination" list="media-folders" class="gated" disabled
+                 value="{{ destination }}" placeholder="concerts" autocomplete="off">
+          <button type="button" id="saveDest" class="btn ghost sm gated" disabled title="Remember this as the default">Save as default</button>
+          <button type="button" id="browseBtn" class="btn ghost sm gated" disabled
+                  title="Browse existing folders below to fill Author/Show — for a folder that's been renamed and can't be auto-matched">📁 Browse existing folders</button>
+        </div>
+        <datalist id="media-folders">
+          {% for f in media_folders %}<option value="{{ f }}">{% endfor %}
+        </datalist>
+        <small class="hint">Files go to <code id="writeHint"></code></small>
+      </label>
+
+      <!-- The shutter: collapsed by default, opens directly beneath the
+           button that triggers it (same .help-toggle->#panel pattern used
+           for "Advanced yt-dlp options" above) rather than living in a
+           separate card further down the page -- that distance is what made
+           the browse feature hard to find in the first place. -->
+      <div class="full browse-panel" id="treePanel" hidden>
+        <div class="jobhead">
+          <h3>Browse <code id="treeDest"></code></h3>
+          <div class="jobactions">
+            <button type="button" id="cleanupBtn" class="btn ghost sm" title="Delete leftover .part files from failed runs">🧹 Clean partials</button>
+            <button type="button" id="treeRefresh" class="btn ghost sm">↻ Refresh</button>
+          </div>
+        </div>
+        <p class="dim sub" style="margin:-4px 0 10px">
+          Click a row to expand it, then <b>Use</b> next to an Author/Title to fill the fields above
+          with that EXACT folder name — the one case auto-matching can't help with is a folder that's
+          been renamed (e.g. to a pen name), since there's nothing left in the video/channel to match
+          it against.
+        </p>
+        <div id="tree" class="tree"><p class="dim">Loading…</p></div>
+      </div>
+
+      <label>
+        <span>Author <small>(audiobooks only)</small></span>
+        <input type="text" name="author" id="author" class="gated" disabled placeholder="(optional — narrator/publisher channel usually works)" autocomplete="off">
+      </label>
+
+      <label>
+        <span>Show (artist) <small>(Title, for audiobooks)</small></span>
+        <input type="text" name="show" id="show" required class="gated" disabled placeholder="Show or artist name" autocomplete="off">
+        <small id="showInfo" class="notice"></small>
+      </label>
+
+      <label>
+        <span>Season <small>(episode/date modes)</small></span>
+        <input type="text" name="season" id="season" inputmode="numeric" class="gated" disabled placeholder="72" autocomplete="off">
+        <small id="seasonInfo" class="notice"></small>
+      </label>
+
+      <label>
+        <span>Naming</span>
+        <select name="naming" id="naming" disabled>
+          <optgroup label="Video (Plex Concerts)">
+          {% for k, lbl in video_presets %}
+            <option value="{{ k }}" {{ 'selected' if defaults.naming==k }}>{{ lbl }}</option>
+          {% endfor %}
+          </optgroup>
+          <optgroup label="Audio-only">
+          {% for k, lbl in audio_presets %}
+            <option value="{{ k }}" {{ 'selected' if defaults.naming==k }}>{{ lbl }}</option>
+          {% endfor %}
+          </optgroup>
+          {% if addon_presets %}
+          <optgroup label="Add-ons">
+          {% for k, lbl in addon_presets %}
+            <option value="{{ k }}" {{ 'selected' if defaults.naming==k }}>{{ lbl }}</option>
+          {% endfor %}
+          </optgroup>
+          {% endif %}
+        </select>
+      </label>
+
+      <label>
+        <span>Quality</span>
+        <select name="quality" class="gated" disabled>
+          <option value="max">max — best available</option>
+          <option value="compatible">compatible — H.264/AAC ≤1080p</option>
+        </select>
+      </label>
+
+      <label>
+        <span>Genres <small>(comma-separated)</small></span>
+        <input type="text" name="genres" class="gated" disabled value="Music, Concert">
+      </label>
+
+      <label>
+        <span>Studio / label <small>(optional)</small></span>
+        <input type="text" name="studio" class="gated" disabled placeholder="(defaults to channel)">
+      </label>
+
+      <label>
+        <span>Tour <small>(optional — performance names)</small></span>
+        <input type="text" name="tour" id="tour" class="gated" disabled placeholder="e.g. X72 (else the playlist title)" autocomplete="off">
+      </label>
+
+      <label>
+        <span>Cookies from browser <small>(optional)</small></span>
+        <input type="text" name="cookies_browser" id="cookies" list="browsers" class="gated" disabled
+               placeholder="firefox / chrome / …" autocomplete="off">
+        <datalist id="browsers">
+          {% for b in browsers %}<option value="{{ b }}">{% endfor %}
+        </datalist>
+        <small id="cookiesInfo" class="notice"></small>
+      </label>
+
+      <label>
+        <span>Speed limit <small>(optional — helps avoid 403s)</small></span>
+        <input type="text" name="limit_rate" class="gated" disabled placeholder="e.g. 4M" autocomplete="off">
+      </label>
+
+      <label>
+        <span>Clip range <small>(optional — trim intros/outros or grab a section)</small></span>
+        <input type="text" name="clip" class="gated" disabled placeholder="e.g. 1:30-5:00, 24 (skip first 24s), or -30 (trim last 30s)" autocomplete="off">
+        <small class="hint">'24' skips an intro; '-30' trims a trailing outro/promo; '1:30-5:00' grabs just that range. Applies to every video in the playlist.</small>
+      </label>
+
+      <label class="full">
+        <span>Advanced yt-dlp options <small>(optional)</small>
+          <button type="button" class="help-toggle" data-help="ytdlpHelp">? how &amp; why</button></span>
+        <input type="text" name="ytdlp_opts" class="gated" disabled placeholder="e.g. --sub-langs en,es --embed-subs" autocomplete="off">
+        <div class="help" id="ytdlpHelp" hidden>
+          <p><b>What.</b> Extra yt-dlp switches appended to your download — this exposes any
+             yt-dlp feature that doesn't already have its own field above.</p>
+          <p><b>How.</b> Type them like a command line, space-separated. Quote a value that
+             contains spaces, e.g. <code>--match-title "Live in Dublin"</code>.</p>
+          <p><b>Handy for concerts &amp; series:</b></p>
+          <ul>
+            <li><code>--sponsorblock-remove sponsor</code> — <b>cuts</b> ad reads out of the file. Prefer the
+                <i>Mark sponsor segments</i> checkbox, which keeps everything. Avoid the <code>intro</code>,
+                <code>outro</code>, <code>filler</code>, <code>music_offtopic</code> and <code>all</code>
+                categories on concerts: viewers use them for walk-ons, banter and encore breaks, so they
+                cut real performance. Cuts land on the nearest keyframe and can't be undone.</li>
+            <li><code>--sub-langs en,es --embed-subs</code> — choose subtitle languages</li>
+            <li><code>-f "bv*[height&lt;=1080]+ba"</code> — custom format / quality</li>
+            <li><code>--playlist-items 1-10</code> — a range (or use the Preview picker)</li>
+            <li><code>--live-from-start</code> — record a live stream from its beginning</li>
+          </ul>
+          <p><b>Why.</b> yt-dlp has hundreds of options; rather than a box for each, use any of them here.</p>
+          <p><b>Blocked for safety:</b> a few switches that <i>run programs</i> or <i>read/write files
+             outside your download</i> (<code>--exec</code>, <code>-o</code>, <code>--paths</code>,
+             <code>--cookies</code>, external-downloader / postprocessor args…). Those aren't download
+             features, so you lose nothing.</p>
+          <p><a href="https://github.com/yt-dlp/yt-dlp#usage-and-options" target="_blank" rel="noopener">Full yt-dlp option reference ↗</a></p>
+        </div>
+      </label>
+
+      <fieldset class="full checks">
+        <label class="chk"><input type="checkbox" name="audio_only" id="audio_only" class="gated" disabled> <b>Audio only</b> <small>(keeps this naming mode's dating/venue/destination — just extracts audio instead of video)</small></label>
+        <label class="chk"><input type="checkbox" name="page_capture" id="page_capture" class="gated" disabled> <b>Capture from the page's audio player</b> <small>(audio presets; for sites yt-dlp can't read. Opens the page in a browser and saves what its player streams)</small>
+          <button type="button" class="help-toggle" data-help="pageCaptureHelp">? how &amp; limits</button></label>
+        <div class="help full" id="pageCaptureHelp" hidden>
+          <p><b>When to use it.</b> Try a normal download first. Use this when yt-dlp doesn't recognise the site but the page plays audio in a browser.</p>
+          <p><b>How long it takes.</b> Plain files download at full speed. A player that streams through Media Source has to play through, so that capture takes as long as the track. Preview tells you which it is.</p>
+          <p><b>Sites with a login.</b> Run <code>scripts/page-login.sh &lt;url&gt;</code> once on the server. Your own servers on private addresses also need listing in <code>PAGE_CAPTURE_ALLOW_HOSTS</code>.</p>
+          <p><b>What it won't do.</b> It doesn't capture DRM-protected or encrypted audio, and it doesn't get past bot checks or CAPTCHAs.</p>
+          <p><b>Check first.</b> Only save audio you have the right to keep. Many streaming sites' terms forbid downloading, and this tool can't tell.</p>
+        </div>
+        <label class="chk"><input type="checkbox" name="run_rename" id="run_rename" class="gated" disabled checked> Seasons &amp; episodes by <b>performance date</b> <small>(from title/description)</small></label>
+        <label class="chk"><input type="checkbox" name="reverse" class="gated" disabled checked> Oldest video → E001 <small>(episode mode)</small></label>
+        <label class="chk"><input type="checkbox" name="run_nfo" class="gated" disabled checked> Generate NFO metadata</label>
+        <label class="chk"><input type="checkbox" name="run_artwork" class="gated" disabled checked> Generate Plex artwork</label>
+        <label class="chk"><input type="checkbox" name="write_subs" class="gated" disabled> Download subtitles</label>
+        <label class="chk"><input type="checkbox" name="sponsor_marks" class="gated" disabled> Mark sponsor segments as chapters <small>(nothing is cut; uses the online SponsorBlock service)</small>
+          <button type="button" class="help-toggle" data-help="sponsorHelp">? how &amp; when</button></label>
+        <div class="help full" id="sponsorHelp" hidden>
+          <p><b>What it does.</b> Adds a chapter called <code>[SponsorBlock]: Sponsor</code> (or <code>Unpaid/Self Promotion</code>) wherever viewers have flagged an ad read or a "subscribe to my channel" plug. In Plex you jump past it from the chapter list. The video itself is complete.</p>
+          <p><b>What it does to song chapters.</b> If an ad sits in the middle of a song's chapter, that chapter is split around it: <i>Battery → [SponsorBlock]: Sponsor → Battery</i>. A video with no chapters gets three: <i>title → Sponsor → title</i>.</p>
+          <p><b>When to use it.</b> Big channels that put sponsor reads inside the video (TV-style shows, podcasts). Most full-concert uploads have none, so it usually does nothing there.</p>
+          <p><b>No Skip button.</b> Plex's automatic Skip buttons come only from its own detection, so this can't make one appear.</p>
+          <p><b>Online lookup.</b> Each video is looked up on sponsor.ajay.app, sending only a short hash prefix of its ID. If the service is down the download still finishes, without marks. Marks are fixed at download time; later submissions aren't added.</p>
+        </div>
+        <label class="chk"><input type="checkbox" name="live" id="live" class="gated" disabled> Live stream — record with streamlink</label>
+        <label class="chk"><input type="checkbox" name="direct" class="gated" disabled> Work directly in library <small>(skip temp staging; episodes appear as they finish)</small></label>
+        <p class="full dim sub" style="margin:2px 0 0">
+          <b>performance</b> and <b>sequence</b> modes always date by the concert, so this toggle
+          doesn't apply to them. For the other modes, <b>performance date</b> on lays files out by
+          concert year/date (read from title/description); off uses the mode's own scheme (upload
+          date, or fixed episode numbers). Use <b>Preview</b> to see exactly.
+        </p>
+      </fieldset>
+
+      <input type="hidden" name="include" id="include" value="">
+
+      <div class="full actions">
+        <button type="submit" id="startBtn" class="btn gated" disabled>Start download</button>
+        <span id="formMsg" class="notice"></span>
+      </div>
+
+      <div class="full preview" id="preview" hidden>
+        <div class="jobhead">
+          <h3 id="previewHead">Preview</h3>
+          <div class="jobactions">
+            <button type="button" id="selAll" class="btn ghost sm">All</button>
+            <button type="button" id="selNone" class="btn ghost sm">None</button>
+            <button type="submit" id="dlSelected" class="btn sm gated" disabled>Download selected</button>
+          </div>
+        </div>
+        <p id="compat" class="compat"></p>
+        <p id="previewNote" class="dim sub"></p>
+        <p id="sponsorNote" class="dim sub" hidden></p>
+        <ol id="previewList" class="preview-list"></ol>
+      </div>
+    </form>
+  </section>
+
+  <section class="card">
+    <h2>Jobs</h2>
+    {% if jobs %}
+    <table class="jobs">
+      <thead><tr><th>Show</th><th>Mode</th><th>Status</th><th>Created</th><th></th></tr></thead>
+      <tbody>
+      {% for j in jobs %}
+        <tr>
+          <td>{{ j.show }}{% if j.chunk_label %} <small class="dim">({{ j.chunk_label }})</small>{% endif %}</td>
+          <td>{{ j.naming }}</td>
+          <td><span class="badge {{ j.status }}">{{ j.status }}</span></td>
+          <td class="dim">{{ j.created }}</td>
+          <td><a class="btn ghost sm" href="/jobs/{{ j.id }}">Open</a></td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="dim">No jobs yet. Start one above.</p>
+    {% endif %}
+  </section>
+</main>
+
+<script>
+const LIBRARY_ROOT = {{ library_root|tojson }};
+const AUDIO_PRESETS = new Set({{ audio_names|tojson }});
+const PRESET_DEST = {{ preset_dest|tojson }};
+// [key, label] pairs for the Video/Audio toggle to repopulate #naming with --
+// same data the server used to build the <optgroup>s, so the two never drift.
+const PRESET_OPTIONS = { video: {{ video_presets|tojson }}, audio: {{ (audio_presets + addon_presets)|tojson }} };
+const DEFAULT_GENRES = 'Music, Concert';
+const $ = (id) => document.getElementById(id);
+const destEl = $('destination'), showEl = $('show'), authorEl = $('author');
+const INITIAL_DEST = destEl.value.trim();
+
+function dest() { return destEl.value.trim().replace(/^\/+|\/+$/g, ''); }
+function debounce(fn, ms) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; }
+
+// Mirrors main._folder_id(): plain Title for every preset except audiobook,
+// which nests Author/Title. Kept in sync by hand with the backend version --
+// this is display-only (the server is the actual source of truth), but a
+// stale copy here is exactly the bug that prompted this (the hint/exists-
+// check kept showing the old flat path after Author shipped).
+function folderId() {
+  const show = showEl.value.trim() || '<show>';
+  if ($('naming').value === 'audiobook') {
+    return `${authorEl.value.trim() || '(unknown author)'}/${show}`;
+  }
+  return show;
+}
+
+function updateWriteHint() {
+  $('writeHint').textContent = `${LIBRARY_ROOT}/${dest() || 'concerts'}/${folderId()}/`;
+}
+
+// --- "does this show already exist / which seasons" -----------------------
+const checkShow = debounce(async () => {
+  const el = $('showInfo');
+  const show = showEl.value.trim();
+  if (!show) { el.textContent = ''; el.className = 'notice'; return; }
+  try {
+    const q = new URLSearchParams({show, destination: dest(), naming: $('naming').value, author: authorEl.value.trim()});
+    const r = await fetch(`/api/show-info?${q}`);
+    const j = await r.json();
+    if (!j.exists) {
+      el.className = 'notice new';
+      el.textContent = `New — folder will be created: ${dest() || 'concerts'}/${folderId()}/`;
+    } else if (j.seasons.length) {
+      el.className = 'notice exists';
+      const parts = j.seasons.map(s => `${s.name} (${s.videos})`).join(', ');
+      el.textContent = `Exists — ${parts}. New downloads add to these.`;
+    } else {
+      el.className = 'notice exists';
+      el.textContent = `Folder exists (${j.total_videos} item(s), no season subfolders yet).`;
+    }
+  } catch { el.textContent = ''; }
+}, 350);
+
+// --- destination tree (lazy: shows -> seasons) ----------------------------
+// Skips the fetch entirely while the shutter is collapsed -- every call site
+// below (destination change, "Save as default", initial page load) can stay
+// unconditional; opening the panel re-calls this to pick up whatever changed
+// while it was closed.
+async function loadTree() {
+  if ($('treePanel').hidden) return;
+  $('treeDest').textContent = `${LIBRARY_ROOT}/${dest() || 'concerts'}/`;
+  const box = $('tree');
+  box.innerHTML = '<p class="dim">Loading…</p>';
+  let j;
+  try { j = await (await fetch(`/api/browse?path=${encodeURIComponent(dest())}`)).json(); }
+  catch { box.innerHTML = '<p class="dim">Could not read folder.</p>'; return; }
+  if (!j.exists) { box.innerHTML = '<p class="dim">This folder doesn\'t exist yet — it\'ll be created on first download (or click “Save as default”).</p>'; return; }
+  if (!j.entries.length) { box.innerHTML = '<p class="dim">Empty — no shows yet.</p>'; return; }
+  box.innerHTML = '';
+  for (const e of j.entries) box.appendChild(showRow(e));
+}
+
+// Fill Author/Show from a REAL folder picked in the tree, instead of the
+// person retyping it (and risking a near-duplicate folder on a typo). In
+// audiobook mode the tree's top level is Author and its leaves are Title
+// (the on-disk layout is dest/<Author>/<Title>/); in every other mode the
+// top level IS the Show and leaves are just season subfolders, not
+// something you'd "pick" into Show. Checked at CLICK time, not render time,
+// so toggling the Video/Audio preset after the tree is already open still
+// does the right thing.
+function useFolder(author, show) {
+  if ($('naming').value === 'audiobook') {
+    if (author !== null) { authorEl.value = author; authorEl.dispatchEvent(new Event('input', {bubbles: true})); }
+    if (show !== null) { showEl.value = show; showEl.dispatchEvent(new Event('input', {bubbles: true})); }
+  } else if (show !== null) {
+    showEl.value = show; showEl.dispatchEvent(new Event('input', {bubbles: true}));
+  }
+}
+
+function showRow(e) {
+  const row = document.createElement('div');
+  row.className = 'tree-item';
+  const seasons = e.subdirs ? `${e.subdirs} season${e.subdirs === 1 ? '' : 's'}` : (e.videos ? `${e.videos} item${e.videos === 1 ? '' : 's'}` : 'empty');
+  row.innerHTML = `<div class="tree-row">
+      <button class="tree-toggle" type="button">
+        <span class="tw">▸</span><span class="tname">${e.name}</span><span class="pill">${seasons}</span>
+      </button>
+      <button class="tree-use" type="button" title="Use this as Author/Show">Use</button>
+    </div><div class="tree-kids" hidden></div>`;
+  const toggle = row.querySelector('.tree-toggle');
+  const kids = row.querySelector('.tree-kids');
+  const tw = row.querySelector('.tw');
+  row.querySelector('.tree-use').addEventListener('click', () => {
+    // A row is Author in audiobook mode (leave Title for the leaf-level Use,
+    // or whatever's already typed), Show in every other mode.
+    useFolder(e.name, $('naming').value === 'audiobook' ? null : e.name);
+  });
+  toggle.addEventListener('click', async () => {
+    const open = !kids.hidden;
+    if (open) { kids.hidden = true; tw.textContent = '▸'; return; }
+    tw.textContent = '▾'; kids.hidden = false;
+    if (kids.dataset.loaded) return;
+    kids.innerHTML = '<p class="dim sub">…</p>';
+    try {
+      const sub = await (await fetch(`/api/browse?path=${encodeURIComponent((dest() ? dest() + '/' : '') + e.name)}`)).json();
+      kids.dataset.loaded = '1';
+      if (!sub.entries.length) {
+        kids.innerHTML = `<p class="dim sub">${sub.loose_videos} item(s), no subfolders.</p>`;
+      } else {
+        kids.innerHTML = sub.entries.map(s => `<div class="tree-leaf">
+            <span class="tname">${s.name}</span><span class="pill">${s.videos} item${s.videos === 1 ? '' : 's'}</span>
+            <button class="tree-use" type="button" data-author="${e.name.replace(/"/g, '&quot;')}" data-show="${s.name.replace(/"/g, '&quot;')}" title="Use this as Author + Title">Use</button>
+          </div>`).join('');
+        // Leaf = a season subfolder in every non-audiobook mode -- not
+        // something that belongs in Show, so this only does anything when
+        // the on-disk layout it was read from (Author/Title) actually
+        // matches the current mode.
+        kids.querySelectorAll('.tree-use').forEach(b => b.addEventListener('click', () => {
+          if ($('naming').value !== 'audiobook') return;
+          useFolder(b.dataset.author, b.dataset.show);
+        }));
+      }
+    } catch { kids.innerHTML = '<p class="dim sub">error</p>'; }
+  });
+  return row;
+}
+
+// --- save destination as default ------------------------------------------
+$('saveDest').addEventListener('click', async (ev) => {
+  const d = dest();
+  if (!d) { destEl.focus(); return; }
+  ev.target.disabled = true; const old = ev.target.textContent; ev.target.textContent = 'Saving…';
+  try {
+    const r = await fetch('/settings', {method: 'POST', headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+      body: 'destination=' + encodeURIComponent(d)});
+    ev.target.textContent = r.ok ? '✓ Saved' : 'Failed';
+  } catch { ev.target.textContent = 'Failed'; }
+  loadTree();
+  setTimeout(() => { ev.target.textContent = old; ev.target.disabled = false; }, 1400);
+});
+
+// --- add-ons (Audiobook / Podcast) ------------------------------------------
+$('addonsBtn').addEventListener('click', () => {
+  const p = $('addonsPanel'); p.hidden = !p.hidden;
+  $('addonsBtn').setAttribute('aria-expanded', String(!p.hidden));
+});
+document.querySelectorAll('.addon-toggle').forEach(cb => cb.addEventListener('change', async () => {
+  const msg = $('addonsMsg');
+  msg.className = 'notice'; msg.textContent = 'Saving…';
+  try {
+    const r = await fetch('/settings/addons', {method: 'POST',
+      body: new URLSearchParams({name: cb.dataset.name, on: cb.checked ? '1' : ''})});
+    if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
+    msg.textContent = 'Saved. Reloading so the Naming list matches…';
+    setTimeout(() => location.reload(), 700);
+  } catch (e) { cb.checked = !cb.checked; msg.className = 'notice bad'; msg.textContent = 'Couldn\'t save: ' + e.message; }
+}));
+
+// --- update yt-dlp --------------------------------------------------------
+$('updateBtn').addEventListener('click', async (e) => {
+  e.target.disabled = true; e.target.textContent = 'Updating…';
+  try {
+    const j = await (await fetch('/update', {method: 'POST'})).json();
+    e.target.textContent = j.ok ? ('yt-dlp ' + j.yt_dlp) : 'Update failed';
+  } catch { e.target.textContent = 'Update failed'; }
+  setTimeout(() => location.reload(), 1500);
+});
+
+// --- inline field validation ----------------------------------------------
+const BROWSERS = {{ browsers|tojson }};
+const form = $('jobForm');
+
+function validateCookies() {
+  const el = $('cookies'), info = $('cookiesInfo'), v = el.value.trim();
+  if (!v) { el.classList.remove('bad'); info.textContent = ''; info.className = 'notice'; return true; }
+  const ok = BROWSERS.includes(v.split(':')[0].toLowerCase());
+  el.classList.toggle('bad', !ok);
+  info.className = 'notice ' + (ok ? 'exists' : 'bad');
+  info.textContent = ok ? '✓ recognised' : `Unknown — use: ${BROWSERS.join(', ')}`;
+  return ok;
+}
+function validateSeason() {
+  const el = $('season'), info = $('seasonInfo'), v = el.value.trim();
+  const ok = !v || /^\d+$/.test(v);
+  el.classList.toggle('bad', !ok);
+  info.className = 'notice ' + (ok ? '' : 'bad');
+  info.textContent = ok ? '' : 'Whole number only (e.g. 72).';
+  return ok;
+}
+
+// --- dry-run preview + file selection -------------------------------------
+function picks() { return [...document.querySelectorAll('.pick')]; }
+function updateSelCount() { $('dlSelected').textContent = `Download selected (${picks().filter(c => c.checked).length})`; }
+
+function errText(j) {
+  if (j && j.error) return j.error;
+  const d = j && j.detail;
+  if (typeof d === 'string') return d;
+  if (Array.isArray(d)) return d.map(e =>
+    e && e.msg ? `${e.msg}${e.loc ? ` (${e.loc[e.loc.length - 1]})` : ''}` : String(e)).join('; ');
+  return 'Preview failed.';
+}
+
+async function runPreview() {
+  if (!validateCookies() || !validateSeason()) return;
+  const box = $('preview'), list = $('previewList');
+  const urlV = (form.url.value || '').trim();
+  // Show is NOT required to preview -- that's what the suggestion chips are
+  // for. A real download still requires it (native "required" on the field).
+  if (!urlV) {
+    box.hidden = false; $('previewHead').textContent = 'Preview'; $('previewNote').textContent = '';
+    list.innerHTML = `<li class="notice bad">Enter a playlist or video URL first.</li>`;
+    return;
+  }
+  const btn = $('previewBtn'), old = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Reading…';
+  box.hidden = false; $('previewNote').textContent = '';
+  list.innerHTML = '<li class="dim sub">Extracting… (dated modes read each video — this can take a moment).</li>';
+  // Drop the previous preview's sponsor note and abandon its in-flight check;
+  // otherwise a re-preview shows stale results beside an empty list.
+  sponsorSeq++; $('sponsorNote').hidden = true; $('sponsorNote').textContent = '';
+  try {
+    const body = new URLSearchParams(new FormData(form)); body.delete('include');
+    const r = await fetch('/preview', {method: 'POST', body});
+    const j = await r.json();
+    if (!r.ok || j.error) list.innerHTML = `<li class="notice bad">${errText(j)}</li>`;
+    else { renderPreview(j); refreshRecent(); }
+  } catch { list.innerHTML = '<li class="notice bad">Preview failed.</li>'; }
+  btn.disabled = false; btn.textContent = old;
+}
+
+// The show/author values the CURRENT preview's paths were rendered with --
+// lets a suggestion-chip pick rewrite already-rendered paths in place, with
+// no second /preview round trip (see applyShowRename()/applyAuthorFill()).
+let previewShowToken = '';
+let previewAuthorToken = '';
+
+// Every suggested value is routable to EITHER Title or Author, regardless of
+// which one the app guessed -- surfaced by a real case: Load URL fires before
+// you've necessarily picked Audiobook naming, so the channel/title split
+// preview.py normally does for audiobook (channel -> Author, title -> Title)
+// hasn't happened yet, and both arrive as generic "show" candidates. Rather
+// than chase better guessing, every chip gets explicit Title/Author buttons;
+// the chip's OWN click still does its recommended field, as a shortcut.
+function renderSuggestions(sugg) {
+  const box = $('showSuggest');
+  const items = ((sugg && sugg.show) || []).map(s => ({...s, defaultTarget: 'show'}));
+  const author = sugg && sugg.metadata && sugg.metadata.author;
+  if (author) items.push({...author, kind: 'author', defaultTarget: 'author'});
+
+  if (!items.length) { box.hidden = true; box.innerHTML = ''; }
+  else {
+    box.hidden = false;
+    box.innerHTML = '<span class="dim sub">Suggested — pick a field:</span>' + items.map(s => `
+      <span class="sugg-group">
+        <button type="button" class="chip sugg-${esc(s.kind)}" data-value="${esc(s.value)}" data-target="${esc(s.defaultTarget)}"
+                title="${esc(s.label)} (${esc(s.confidence)})">${esc(s.value)}</button>
+        <button type="button" class="chip-mini" data-value="${esc(s.value)}" data-target="show" title="Use as Title/Show">Title</button>
+        <button type="button" class="chip-mini" data-value="${esc(s.value)}" data-target="author" title="Use as Author">Author</button>
+      </span>`
+    ).join('');
+  }
+  renderPresetSuggestion(sugg && sugg.preset);
+}
+
+// Conservative content-type nudge ("this looks like an Audiobook") -- opt-in,
+// never auto-switches. Clicking it changes the preset AND re-runs Preview,
+// since a preset switch invalidates the file list anyway (see the shared
+// 'form input' invalidation handler).
+function renderPresetSuggestion(preset) {
+  const box = $('presetSuggest');
+  if (!preset) { box.hidden = true; box.innerHTML = ''; return; }
+  box.hidden = false;
+  box.innerHTML = `This looks like ${esc(preset.label)} — ${esc(preset.reason)}. ` +
+    `<button type="button" class="btn ghost sm" id="applyPresetSuggest">Switch &amp; preview again</button>`;
+  document.getElementById('applyPresetSuggest').addEventListener('click', () => {
+    $('naming').value = preset.value;
+    updateNamingUI();
+    runPreview();
+  });
+}
+
+function applyShowRename(newShow) {
+  if (previewShowToken && newShow !== previewShowToken) {
+    document.querySelectorAll('#previewList code').forEach(el => {
+      el.textContent = el.textContent.split(previewShowToken).join(newShow);
+    });
+  }
+  previewShowToken = newShow;
+  showEl.value = newShow;
+  updateWriteHint(); checkShow();
+}
+
+// Same live-rewrite trick as applyShowRename(), for the Author segment of an
+// audiobook's Author/Title folder path (previewAuthorToken starts as the
+// "(unknown author)" placeholder -- see main._UNKNOWN_AUTHOR).
+function applyAuthorFill(newAuthor) {
+  if (previewAuthorToken && newAuthor !== previewAuthorToken) {
+    document.querySelectorAll('#previewList code').forEach(el => {
+      el.textContent = el.textContent.split(previewAuthorToken).join(newAuthor);
+    });
+  }
+  previewAuthorToken = newAuthor;
+  authorEl.value = newAuthor;
+  updateWriteHint(); checkShow();
+}
+
+$('showSuggest').addEventListener('click', (e) => {
+  const btn = e.target.closest('.chip, .chip-mini');
+  if (!btn) return;
+  if (btn.dataset.target === 'author') applyAuthorFill(btn.dataset.value);
+  else applyShowRename(btn.dataset.value);
+});
+
+function renderPreview(j) {
+  $('previewHead').textContent = `Preview — ${j.total} file(s)` + (j.truncated ? ` (showing first ${j.shown})` : '');
+  const cEl = $('compat'), c = j.compat;
+  if (c && c.summary) { cEl.textContent = 'Compatibility — ' + c.summary; cEl.className = 'compat' + (c.drm ? ' notice bad' : ''); }
+  else { cEl.textContent = ''; cEl.className = 'compat'; }
+  $('previewNote').textContent = (j.quality ? `Quality: ${j.quality}. ` : '') + (j.note || '');
+  previewShowToken = j.show || '';
+  previewAuthorToken = j.author || '';
+  renderSuggestions(j.suggestions);
+  const list = $('previewList');
+  list.innerHTML = '';
+  for (const it of j.items) {
+    const li = document.createElement('li');
+    li.className = 'preview-row';
+    if (it.id) li.dataset.vid = it.id;
+    li.innerHTML = `<label class="chk"><input type="checkbox" class="pick" value="${it.playlist_index}" checked>
+      <code>${it.path}</code>${it.media ? `<span class="pill">${it.media}</span>` : ''}${it.renamed_from ? `<span class="pill rename">renumbered from ${it.renamed_from}</span>` : ''}</label>`;
+    list.appendChild(li);
+  }
+  if (j.truncated) {
+    const li = document.createElement('li');
+    li.className = 'dim sub';
+    li.textContent = `…and ${j.total - j.shown} more not shown (they still download unless you deselect above).`;
+    list.appendChild(li);
+  }
+  updateSelCount();
+  checkSponsors();
+}
+
+// --- SponsorBlock check (external service, see /sponsors) -------------------
+// Runs AFTER the preview renders, as its own request, so a slow or down
+// SponsorBlock never delays Preview. Read-only: it only suggests the checkbox.
+const fmtT = s => { s = Math.round(s); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = String(s % 60).padStart(2, '0');
+  return h ? `${h}:${String(m).padStart(2, '0')}:${x}` : `${m}:${x}`; };
+let sponsorSeq = 0;
+async function checkSponsors() {
+  const note = $('sponsorNote'), seq = ++sponsorSeq;
+  note.hidden = true; note.textContent = '';
+  if ($('page_capture') && $('page_capture').checked) return;
+  const rows = [...document.querySelectorAll('#previewList li[data-vid]')];
+  if (!rows.length) return;
+  note.hidden = false; note.textContent = 'Checking SponsorBlock for sponsor segments…';
+  let j;
+  try { j = await (await fetch('/api/sponsors/check?ids=' + encodeURIComponent(rows.map(r => r.dataset.vid).join(',')))).json(); }
+  catch { j = null; }
+  if (seq !== sponsorSeq) return;             // a newer preview replaced this one
+  if (!j || j.status === 'unavailable') { note.textContent = 'SponsorBlock couldn\'t be reached (or today\'s lookup budget is spent). Nothing else is affected.'; return; }
+  let hits = 0;
+  for (const r of rows) {
+    const segs = (j.segments || {})[r.dataset.vid];
+    if (!segs) continue;
+    hits++;
+    const pill = document.createElement('span');
+    pill.className = 'pill rename';
+    pill.textContent = 'ad ' + segs.map(s => `${fmtT(s.start)}–${fmtT(s.end)}`).join(', ');
+    pill.title = segs.map(s => `${s.category}: ${fmtT(s.start)}–${fmtT(s.end)}`).join('\n');
+    r.querySelector('label').appendChild(pill);
+  }
+  note.textContent = '';
+  const marks = form.querySelector('input[name="sponsor_marks"]');
+  if (!hits) { note.textContent = `SponsorBlock: no sponsor segments in these ${rows.length} item(s).`; return; }
+  const txt = document.createElement('span');
+  txt.textContent = `SponsorBlock: ${hits} of ${rows.length} item(s) have sponsor segments. ` +
+    (marks.checked ? 'They will be marked as chapters.' : 'Tick "Mark sponsor segments as chapters" to label them (nothing is cut). ');
+  note.appendChild(txt);
+  if (!marks.checked && !marks.disabled) {
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'btn ghost sm'; b.textContent = 'Tick it';
+    b.addEventListener('click', () => { marks.checked = true; b.remove(); txt.textContent = `SponsorBlock: ${hits} of ${rows.length} item(s) have sponsor segments. They will be marked as chapters.`; });
+    note.appendChild(b);
+  }
+  if (j.failed && j.failed.length) note.appendChild(document.createTextNode(` (${j.failed.length} couldn't be checked.)`));
+  const cr = document.createElement('small'); cr.className = 'dim'; cr.textContent = ' ' + (j.attribution || '');
+  note.appendChild(cr);
+}
+
+// Start = download everything; "Download selected" = only the ticked items.
+$('startBtn').addEventListener('click', () => { $('include').value = ''; });
+$('dlSelected').addEventListener('click', (e) => {
+  const chosen = picks().filter(c => c.checked).map(c => c.value);
+  if (!chosen.length) { e.preventDefault(); $('formMsg').className = 'notice bad'; $('formMsg').textContent = 'Pick at least one file.'; return; }
+  $('include').value = chosen.join(',');
+});
+form.addEventListener('submit', (e) => {
+  if (!validateCookies() || !validateSeason()) { e.preventDefault(); $('formMsg').className = 'notice bad'; $('formMsg').textContent = 'Fix the highlighted fields.'; }
+});
+// Editing the form invalidates a stale preview/selection. Show/Author
+// themselves are exempt from clearing the suggestion chips -- you can freely
+// type your own name while the chips stay usable as shortcuts (picking one
+// still works).
+form.addEventListener('input', (e) => {
+  if (e.target.classList.contains('pick')) return;
+  $('preview').hidden = true; $('include').value = ''; $('formMsg').textContent = '';
+  if (e.target !== showEl && e.target !== authorEl) {
+    previewShowToken = '';
+    previewAuthorToken = '';
+    renderSuggestions(null);
+  }
+});
+
+// --- suggest a show name from the URL's channel (fills only if empty) ------
+let lastSuggestUrl = '';
+const suggestShow = debounce(async () => {
+  const urlV = (form.url.value || '').trim();
+  if (!urlV || urlV === lastSuggestUrl || showEl.value.trim()) return;
+  lastSuggestUrl = urlV;
+  try {
+    const q = `/api/suggest-show?url=${encodeURIComponent(urlV)}&cookies_browser=${encodeURIComponent($('cookies').value.trim())}`;
+    const j = await (await fetch(q)).json();
+    if (j.suggestion && !showEl.value.trim()) {
+      showEl.value = j.suggestion;
+      updateWriteHint(); checkShow();
+    }
+  } catch { /* leave manual */ }
+}, 700);
+
+// Performance & sequence modes always date by the concert, so the
+// performance-date toggle doesn't apply — dim it to avoid confusion.
+// Two DIFFERENT reasons a download can be audio-only, mirroring main.py:
+//  - an AUDIO PRESET (Audiobook/Podcast/Music) is its own content type, with
+//    its own destination and NO video-library concepts at all (season,
+//    rename-by-date, NFO, artwork, live capture).
+//  - the plain "Audio only" CHECKBOX on a video naming mode keeps that mode's
+//    dating/venue/destination logic (season, rename all stay live) and only
+//    turns off what's genuinely video-only: NFO, artwork, live capture, and
+//    the Quality dropdown (a video format-selection concept).
+function updateNamingUI() {
+  const mode = $('naming').value;
+  const dated = (mode === 'sequence' || mode === 'performance');
+  const audioPreset = AUDIO_PRESETS.has(mode);
+  const rr = $('run_rename'), chk = rr.closest('.chk');
+  // !formUnlocked wins outright: while locked, stay disabled regardless of
+  // what preset logic would otherwise say (see unlockForm()).
+  rr.disabled = !formUnlocked || dated || audioPreset;
+  if (chk) {
+    chk.style.opacity = (dated || audioPreset) ? '0.45' : '';
+    chk.title = dated ? mode + ' mode always uses the concert date.'
+              : audioPreset ? 'Audio presets never rename by footage date.' : '';
+  }
+  // The Tour field is only used by performance naming — highlight when relevant.
+  const tourLabel = $('tour') && $('tour').closest('label');
+  if (tourLabel) tourLabel.style.opacity = (mode === 'performance') ? '' : '0.55';
+
+  // Author/Title/mediafile folder layout is audiobook-specific -- podcast and
+  // music keep the flat Show-named folder (see presets.py / main.py).
+  const authorLabel = authorEl.closest('label');
+  if (authorLabel) authorLabel.style.opacity = (mode === 'audiobook') ? '' : '0.45';
+
+  const seasonLabel = $('season') && $('season').closest('label');
+  if (seasonLabel) seasonLabel.style.opacity = audioPreset ? '0.45' : '';
+
+  // The checkbox itself is redundant (and disabled) on an audio preset --
+  // that content type is always audio-only already.
+  const audioOnlyChk = $('audio_only'), audioOnlyBox = audioOnlyChk.closest('.chk');
+  audioOnlyChk.disabled = !formUnlocked || audioPreset;
+  if (audioOnlyBox) {
+    audioOnlyBox.style.opacity = audioPreset ? '0.45' : '';
+    audioOnlyBox.title = audioPreset ? 'Already audio-only for this preset.' : '';
+  }
+
+  applyAudioOnlyDimming();
+
+  const presetDest = PRESET_DEST[mode];
+  if (presetDest && (destEl.value.trim() === '' || destEl.value.trim() === INITIAL_DEST)) {
+    destEl.value = presetDest;
+  }
+  // Unconditional (not just on the destination-default branch above):
+  // folderId() itself depends on `mode` (Author/Title nesting is audiobook-
+  // only), so switching naming changes the hint/exists-check even when the
+  // destination doesn't change.
+  updateWriteHint();
+  checkShow();
+  // A preset switch fires 'input' on the <select> too, which the shared form
+  // handler below already uses to invalidate the stale preview + suggestions.
+}
+
+// NFO/artwork/live/Quality are video-only, for EITHER reason above -- an
+// audio preset OR the plain checkbox on a video mode.
+function applyPageCaptureDimming() {
+  // Audio presets only. Disabling these fields also keeps them out of the form
+  // post, so a leftover value can't trip the server's "doesn't apply" check.
+  const pc = $('page_capture');
+  const allowed = AUDIO_PRESETS.has($('naming').value);
+  if (!allowed) pc.checked = false;
+  pc.disabled = !formUnlocked || !allowed;
+  const pcChk = pc.closest('.chk');
+  if (pcChk) { pcChk.style.opacity = allowed ? '' : '0.45'; pcChk.title = allowed ? '' : 'Needs an audio preset: Audiobook, Podcast or Music library.'; }
+  ['limit_rate', 'clip', 'ytdlp_opts', 'cookies_browser', 'direct'].forEach(name => {
+    const el = document.querySelector(`[name="${name}"]`);
+    if (!el) return;
+    el.disabled = !formUnlocked || pc.checked;
+    const wrap = el.closest('.chk') || el.closest('label');
+    if (wrap) { wrap.style.opacity = pc.checked ? '0.45' : ''; wrap.title = pc.checked ? 'Not used by page audio capture.' : ''; }
+  });
+}
+
+function applyAudioOnlyDimming() {
+  applyPageCaptureDimming();
+  const mode = $('naming').value;
+  const noVideoMeta = AUDIO_PRESETS.has(mode) || $('audio_only').checked;
+
+  ['run_nfo', 'run_artwork'].forEach(name => {
+    const el = document.querySelector(`[name="${name}"]`);
+    if (!el) return;
+    el.disabled = !formUnlocked || noVideoMeta;
+    const c = el.closest('.chk');
+    if (c) { c.style.opacity = noVideoMeta ? '0.45' : ''; c.title = noVideoMeta ? 'Not used for audio-only downloads.' : ''; }
+  });
+  const liveChk = $('live').closest('.chk');
+  $('live').disabled = !formUnlocked || noVideoMeta;
+  if (liveChk) { liveChk.style.opacity = noVideoMeta ? '0.45' : ''; liveChk.title = noVideoMeta ? 'Live capture is video-only.' : ''; }
+
+  const qualityLabel = document.querySelector('[name="quality"]') && document.querySelector('[name="quality"]').closest('label');
+  if (qualityLabel) {
+    qualityLabel.style.opacity = noVideoMeta ? '0.45' : '';
+    qualityLabel.title = noVideoMeta ? 'Video format selection -- not used for audio-only.' : '';
+  }
+
+  // Genres/Studio only ever reach generate-nfo.py (pipeline.py's --genre/
+  // --studio flags), which is never even called for audio -- same reason as
+  // NFO/artwork above. A real complaint: "Music, Concert" as the visible
+  // DEFAULT for an audiobook is actively wrong, not just unused, so this also
+  // clears/restores the value -- but only the sentinel default/empty state,
+  // never a value someone actually typed.
+  const genresEl = document.querySelector('[name="genres"]');
+  const genresLabel = genresEl && genresEl.closest('label');
+  if (genresEl) {
+    genresEl.disabled = !formUnlocked || noVideoMeta;
+    if (noVideoMeta && genresEl.value === DEFAULT_GENRES) genresEl.value = '';
+    else if (!noVideoMeta && genresEl.value === '') genresEl.value = DEFAULT_GENRES;
+  }
+  if (genresLabel) {
+    genresLabel.style.opacity = noVideoMeta ? '0.45' : '';
+    genresLabel.title = noVideoMeta ? 'NFO-only metadata -- not used for audio-only downloads.' : '';
+  }
+  const studioEl = document.querySelector('[name="studio"]');
+  const studioLabel = studioEl && studioEl.closest('label');
+  if (studioEl) studioEl.disabled = !formUnlocked || noVideoMeta;
+  if (studioLabel) {
+    studioLabel.style.opacity = noVideoMeta ? '0.45' : '';
+    studioLabel.title = noVideoMeta ? 'NFO-only metadata -- not used for audio-only downloads.' : '';
+  }
+}
+
+// --- recent URL history ---------------------------------------------------
+function esc(s) { return (s || '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+async function refreshRecent() {
+  const box = $('recent');
+  try {
+    const items = await (await fetch('/api/history')).json();
+    if (!items.length) { box.innerHTML = ''; return; }
+    box.innerHTML = '<span class="dim sub">Recent:</span>' + items.slice(0, 8).map(h =>
+      `<button type="button" class="chip" data-url="${esc(h.url)}" data-show="${esc(h.show)}" title="${esc(h.url)}">${esc(h.show || h.url)}</button>`
+    ).join('');
+  } catch { box.innerHTML = ''; }
+}
+$('recent').addEventListener('click', (e) => {
+  const chip = e.target.closest('.chip');
+  if (!chip) return;
+  form.url.value = chip.dataset.url;
+  if (!showEl.value.trim() && chip.dataset.show) showEl.value = chip.dataset.show;
+  lastSuggestUrl = chip.dataset.url;      // don't re-suggest over a picked show
+  $('preview').hidden = true; $('include').value = '';
+  unlockForm();
+  updateWriteHint(); checkShow();
+});
+
+// Live capture: relabel Start, hide the (VOD-only) Preview button.
+function updateLiveUI() {
+  const live = $('live').checked;
+  $('startBtn').textContent = live ? 'Start recording' : 'Start download';
+  $('previewBtn').style.display = live ? 'none' : '';
+  if (live) $('preview').hidden = true;
+}
+
+// Reusable help toggles: a .help-toggle button shows/hides #<data-help>.
+document.querySelectorAll('.help-toggle').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const panel = document.getElementById(btn.dataset.help);
+    if (!panel) return;
+    const show = panel.hidden;
+    panel.hidden = !show;
+    btn.classList.toggle('open', show);
+  });
+});
+
+// --- load URL / unlock the rest of the form --------------------------------
+// Everything below the URL field starts disabled (.gated) so a fresh page
+// isn't a wall of options before there's even a playlist to apply them to.
+// "Load URL" unlocks them AND runs the first Preview in one action.
+let formUnlocked = false;
+function unlockForm() {
+  formUnlocked = true;
+  document.querySelectorAll('.gated').forEach(el => { el.disabled = false; });
+  // Re-apply preset-specific disabling (e.g. run_rename off for performance/
+  // sequence, NFO/artwork off for an audio preset) ON TOP of the blanket
+  // unlock above -- these two disabling systems compose, they don't fight.
+  updateNamingUI();
+  updateLiveUI();
+  applyTypeLock();
+}
+
+// Content type (Video/Audio + the naming/sub-type select) has its OWN lock,
+// separate from .gated: it's the one thing the person already knows before
+// the server has looked at anything, so "Manual" unlocks it BEFORE Load URL
+// -- everything else still needs the actual playlist loaded first.
+function applyTypeLock() {
+  const manual = $('typeModeManual').checked;
+  const locked = !formUnlocked && !manual;
+  $('naming').disabled = locked;
+  document.querySelectorAll('.av-btn').forEach(b => { b.disabled = locked; });
+}
+
+// Repopulates #naming from PRESET_OPTIONS and re-fires it as if the user had
+// picked an option by hand (dispatches both input and change -- a real
+// <select> interaction fires both, and the existing invalidate-stale-preview
+// hook listens for 'input' while updateNamingUI() listens for 'change').
+function setAV(av) {
+  document.querySelectorAll('.av-btn').forEach(b => b.classList.toggle('active', b.dataset.av === av));
+  const list = PRESET_OPTIONS[av] || [];
+  const sel = $('naming');
+  sel.innerHTML = list.map(([k, lbl]) => `<option value="${esc(k)}">${esc(lbl)}</option>`).join('');
+  if (list.length) sel.value = list[0][0];
+  sel.dispatchEvent(new Event('input', {bubbles: true}));
+  sel.dispatchEvent(new Event('change', {bubbles: true}));
+}
+
+async function loadUrl() {
+  const urlV = (form.url.value || '').trim();
+  if (!urlV) {
+    $('formMsg').className = 'notice bad';
+    $('formMsg').textContent = 'Enter a playlist or video URL first.';
+    return;
+  }
+  $('formMsg').textContent = '';
+  unlockForm();
+  await runPreview();
+}
+
+// --- wiring ---------------------------------------------------------------
+$('loadUrlBtn').addEventListener('click', loadUrl);
+form.url.addEventListener('input', suggestShow);
+$('naming').addEventListener('change', updateNamingUI);
+$('audio_only').addEventListener('change', applyAudioOnlyDimming);
+$('page_capture').addEventListener('change', applyPageCaptureDimming);
+$('live').addEventListener('change', updateLiveUI);
+document.querySelectorAll('input[name="typeMode"]').forEach(r => r.addEventListener('change', applyTypeLock));
+document.querySelectorAll('.av-btn').forEach(b => b.addEventListener('click', () => setAV(b.dataset.av)));
+updateNamingUI();
+updateLiveUI();
+applyTypeLock();
+$('previewBtn').addEventListener('click', runPreview);
+$('selAll').addEventListener('click', () => { picks().forEach(c => c.checked = true); updateSelCount(); });
+$('selNone').addEventListener('click', () => { picks().forEach(c => c.checked = false); updateSelCount(); });
+$('previewList').addEventListener('change', updateSelCount);
+$('cookies').addEventListener('input', validateCookies);
+$('season').addEventListener('input', validateSeason);
+showEl.addEventListener('input', () => { updateWriteHint(); checkShow(); });
+authorEl.addEventListener('input', () => { updateWriteHint(); checkShow(); });
+destEl.addEventListener('input', () => { updateWriteHint(); checkShow(); });
+destEl.addEventListener('change', loadTree);
+$('treeRefresh').addEventListener('click', loadTree);
+// Shutter, same shape as .help-toggle->#panel above: opens a panel that's
+// an immediate sibling of the button, not a separate card further down the
+// page with no visual tie to it (that distance is what made the previous
+// version of this feature hard to find at all).
+$('browseBtn').addEventListener('click', () => {
+  const panel = $('treePanel');
+  panel.hidden = !panel.hidden;
+  $('browseBtn').classList.toggle('open', !panel.hidden);
+  if (!panel.hidden) loadTree();
+});
+$('cleanupBtn').addEventListener('click', async (e) => {
+  e.target.disabled = true; const old = e.target.textContent; e.target.textContent = 'Cleaning…';
+  try {
+    const r = await fetch('/cleanup', {method: 'POST', headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+      body: 'destination=' + encodeURIComponent(dest())});
+    const j = await r.json();
+    e.target.textContent = j.removed ? `Removed ${j.removed} (${Math.round((j.bytes||0)/1e6)} MB)` : 'Nothing to clean';
+  } catch { e.target.textContent = 'Failed'; }
+  loadTree();
+  setTimeout(() => { e.target.textContent = old; e.target.disabled = false; }, 2500);
+});
+// Bookmarklet: opens THIS Encoreum (wherever it's served) with the current
+// page's URL loaded and live mode on. Built from location.origin so it works
+// whatever host/port you reach Encoreum at.
+$('bmk').href = "javascript:(function(){window.open('" + location.origin +
+  "/?url='+encodeURIComponent(location.href)+'&live=1','_blank');})();";
+
+// Incoming links from the bookmarklet: ?url=...&live=1 prefills the form.
+(function () {
+  const q = new URLSearchParams(location.search);
+  if (q.get('url')) {
+    form.url.value = q.get('url');
+    lastSuggestUrl = '';
+    updateWriteHint(); suggestShow(); checkShow();
+  }
+  if (q.get('live')) { $('live').checked = true; updateLiveUI(); }
+})();
+
+// "On Air" light — red pulse when a job is running; click → its live log.
+let _onairJob = null;
+async function pollOnAir() {
+  try {
+    const j = await (await fetch('/api/active')).json();
+    const el = $('onair'), txt = $('onairtxt');
+    _onairJob = j.job_id;
+    if (j.running > 0) {
+      el.className = 'onair live';
+      txt.textContent = (j.live ? 'ON AIR · LIVE' : 'ON AIR') + (j.running > 1 ? ` (${j.running})` : '');
+    } else {
+      el.className = 'onair idle';
+      txt.textContent = 'Idle';
+    }
+  } catch { /* keep last state */ }
+  setTimeout(pollOnAir, 4000);
+}
+$('onair').addEventListener('click', (e) => {
+  e.preventDefault();
+  if (_onairJob) location.href = '/jobs/' + _onairJob;
+});
+pollOnAir();
+
+updateWriteHint();
+loadTree();
+refreshRecent();
+</script>
+<script>
+// Surface the pending count on the Review link, so a queue that needs a person
+// is visible from the page people actually land on rather than only if they
+// think to go looking for it.
+(async () => {
+  try {
+    const [i, c] = await Promise.all([
+      fetch("/api/imports?status=pending").then(r => r.json()),
+      fetch("/api/captures?state=review").then(r => r.json()),
+    ]);
+    const n = (i.imports || []).length + (c.captures || []).length;
+    if (n) document.getElementById("reviewLink").textContent = `Review (${n})`;
+  } catch (e) { /* the link still works without a count */ }
+})();
+</script>
+</body>
+</html>
