@@ -463,7 +463,7 @@ is no single parse that works everywhere:
 | `@MontrealRocks` | many | none | prose description + venue gazetteer |
 
 **Skip** `@coachella` and `@lollapalooza` (promo/interviews; 1 concert in 24
-sampled). `@LiveShowTV` is worth it for full episodes only.
+sampled). `@AustinCityLimitsTV` is worth it for full episodes only.
 
 Rules that held across every channel tested:
 - **Negative markers must be evaluated first.** Without it, `HANORAH on playing
@@ -502,9 +502,9 @@ Three anonymous pieces do the whole job:
 running instance:
 
 ```bash
-./scripts/watch-channel.py @LiveShowTV                 # what is coming up
-./scripts/watch-channel.py @LiveShowTV --queue \
-    --show "Live Show TV" --once                          # from cron
+./scripts/watch-channel.py @AustinCityLimitsTV                 # what is coming up
+./scripts/watch-channel.py @AustinCityLimitsTV --queue \
+    --show "Austin City Limits" --once                          # from cron
 ```
 
 It polls `live_status` rather than trusting the clock, because scheduled start
@@ -538,7 +538,7 @@ The tooling therefore:
   straight back into the same wall; the code now does what this says.
 
 Note the feed only carries the most recent ~15 entries (verified: exactly 15 for
-Live Show TV). On a high-volume channel that, not freshness, is the argument for a
+ACL). On a high-volume channel that, not freshness, is the argument for a
 tighter interval.
 
 **yt-dlp metadata calls** are the expensive side — they hit the InnerTube player
@@ -558,11 +558,11 @@ broadcast. Both wait loops are therefore floored at ~60s and widen with distance
 | 15 min – 2h | 5 min |
 | < 15 min | 60 s |
 
-Measured against the real Live Show TV stream 88.6h out: **380 calls total, 4.3/hour.**
+Measured against the real ACL stream 88.6h out: **380 calls total, 4.3/hour.**
 
 Two traps this design avoids, both found by testing rather than reasoning:
 - `_wait_for_scheduled` originally had a flat 26h ceiling. Streams get announced
-  **days** ahead — the Live Show TV test case was 3.7 days out — so it would have given up
+  **days** ahead — the ACL test case was 3.7 days out — so it would have given up
   two days before showtime. The deadline now follows `release_timestamp` + 2h.
 - `watch-channel.py --queue` defers queuing until a stream is within
   `--queue-within` (default 8h), so a job does not sit parked for four days
@@ -1681,9 +1681,9 @@ Measured facts it is built on:
 - **A Live tab (`/streams`) flat listing** returns hundreds of entries in
   one call with id/title/thumbnail/duration/views/live_status but **no
   dates** (NASA: 400 entries, 2 is_live + 398 was_live, 0 dated).
-- **Some channels have no Live tab** (Live Show TV: "This channel does
+- **Some channels have no Live tab** (Austin City Limits: "This channel does
   not have a streams tab"). Fallback checks the newest 50 uploads one by one
-  (~170 s) and keeps is_live/is_upcoming/was_live; on Live Show TV all 50 were
+  (~170 s) and keeps is_live/is_upcoming/was_live; on ACL all 50 were
   `not_live` (premiered "Full Episodes" are not streams), so 0 is correct.
 - Dates: RSS gives the newest ~15 free; per-video `--print` lookups (each an
   InnerTube call through `ratelimit.acquire("youtube")` — its first real

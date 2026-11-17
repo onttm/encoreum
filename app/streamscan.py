@@ -7,7 +7,7 @@ WHERE THE DATA COMES FROM (measured 2026-11-16)
     1. The channel's **Live tab** (`/streams`), one flat yt-dlp call: up to
        hundreds of entries with id, title, thumbnail, duration, views and
        live_status (is_live / is_upcoming / was_live) -- but NO dates.
-       Some channels have no Live tab at all (Live Show TV: "This
+       Some channels have no Live tab at all (Austin City Limits: "This
        channel does not have a streams tab"); their streams are mixed into
        ordinary uploads.
     2. The channel's **RSS feed**: real publish dates for the newest ~15

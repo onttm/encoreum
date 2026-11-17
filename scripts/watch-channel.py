@@ -34,14 +34,14 @@ WHAT IT DOES
 
 USAGE
     # what's coming up on a channel
-    ./watch-channel.py https://www.youtube.com/@LiveShowTV
+    ./watch-channel.py https://www.youtube.com/@AustinCityLimitsTV
 
     # keep watching, and queue anything scheduled into Encoreum
-    ./watch-channel.py @LiveShowTV --queue --show "Live Show TV" \
+    ./watch-channel.py @AustinCityLimitsTV --queue --show "Austin City Limits" \
         --loop 15m
 
     # from cron (recommended): one pass, exits immediately
-    ./watch-channel.py UCLrFzxcwT97ROXn3JAiDIqQ --queue --show "Live Show TV" --once
+    ./watch-channel.py UCLrFzxcwT97ROXn3JAiDIqQ --queue --show "ACL" --once
 
     ./watch-channel.py <channel> --json        # machine-readable
     ./watch-channel.py <channel> --all         # include ordinary uploads

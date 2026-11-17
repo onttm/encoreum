@@ -656,7 +656,7 @@ def _wait_for_scheduled(p: dict, control: JobControl, log,
     log("(Cancel any time; nothing is downloaded while waiting.)")
 
     # A fixed ceiling is wrong when the scheduled time is known: streams get
-    # announced days ahead (the Live Show TV test case was 3.7 days out), and a 26h cap
+    # announced days ahead (the ACL test case was 3.7 days out), and a 26h cap
     # would have quietly given up two days before showtime. When we know when it
     # starts, wait until then plus a 2h grace for a late start; only fall back to
     # the flat ceiling when the schedule is unknown.

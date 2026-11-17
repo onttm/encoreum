@@ -22,7 +22,7 @@ DESIGN NOTES
     question a feed cannot answer — "is this a scheduled stream, and when?".
 
   * `ephemeral` on a source encodes the product thesis: a broadcast is worth
-    capturing in inverse proportion to how likely it is to be rehosted. An Live Show TV
+    capturing in inverse proportion to how likely it is to be rehosted. An ACL
     taping is gone when it is gone; a festival main stream will be superseded by
     cleaner per-artist uploads within weeks. Auto-record should only ever
     default on for the ephemeral tier.
