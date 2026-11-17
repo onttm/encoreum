@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Streams — Encoreum</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='88'>🎸</text></svg>">
+  <link rel="stylesheet" href="/static/app.css">
+  <style>
+    /* Only what the shared sheet does not already cover. */
+    .wrap.wide { max-width: 1200px; }
+    .bar { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; margin: .6rem 0; }
+    .bar input[type=text] { flex: 1 1 16rem; min-width: 10rem; }
+    .chips { display: flex; gap: .4rem; flex-wrap: wrap; margin: .3rem 0 .8rem; }
+    .chips button { font-size: .85rem; }
+    .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+    .seg button { background: transparent; color: var(--ink); border: 0; padding: 6px 11px; font: inherit; font-size: .85rem; cursor: pointer; }
+    .seg button[aria-pressed=true] { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+    .progress { height: 6px; background: var(--panel-2); border-radius: 3px; overflow: hidden; margin: .4rem 0; }
+    .progress > i { display: block; height: 100%; background: var(--accent); width: 0; transition: width .3s; }
+
+    /* --- timeline -------------------------------------------------------- */
+    .tl-scroll { position: relative; overflow-x: auto; overflow-y: hidden; border: 1px solid var(--line);
+                 border-radius: var(--radius); background: var(--panel); scroll-behavior: smooth; }
+    .tl-track { position: relative; min-width: 100%; }
+    .tl-axis { position: absolute; left: 0; right: 0; bottom: 0; height: 30px; border-top: 1px solid var(--line); }
+    .tick { position: absolute; bottom: 0; height: 30px; border-left: 1px solid var(--line);
+            padding: 7px 0 0 5px; font-size: .78rem; color: var(--dim); white-space: nowrap; font-weight: 500; }
+    .tick.year { color: var(--ink); border-left-color: var(--dim); }
+    /* Behind the cards and click-through: live streams sit exactly at NOW. */
+    .now { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--accent); z-index: 1; pointer-events: none; }
+    .now span { position: absolute; top: 4px; left: 6px; font-size: .75rem; font-weight: 700; color: var(--accent);
+                letter-spacing: .06em; }
+    .card-s { position: absolute; width: 128px; height: 120px; padding: 0; border: 1px solid var(--line); border-radius: 8px;
+              background: var(--panel-2); color: var(--ink); text-align: left; cursor: pointer; overflow: hidden;
+              font: inherit; z-index: 2; }
+    .card-s:hover, .card-s:focus-visible { border-color: var(--accent); outline: 2px solid var(--accent); z-index: 4; }
+    .card-s img { display: block; width: 100%; aspect-ratio: 16/9; object-fit: cover; background: #000; }
+    .card-s .t { display: block; padding: 3px 6px 2px; font-size: .74rem; line-height: 1.2; height: 2.4em;
+                 overflow: hidden; }
+    .card-s .d { display: block; padding: 0 6px; font-size: .72rem; color: var(--dim); font-weight: 500;
+                 white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .dot { position: absolute; width: 12px; height: 12px; border-radius: 50%; padding: 0; cursor: pointer; z-index: 2;
+           background: var(--panel-2); border: 2px solid var(--dim); }
+    .dot.approx { border-style: dashed; }
+    .dot.is_live { background: #d92d2d; border-color: #ff8a8a; }
+    .dot.is_upcoming { border-color: var(--accent); }
+    .dot:hover, .dot:focus-visible { border-color: var(--accent); outline: 2px solid var(--accent); z-index: 4; }
+    .card-s.is_live { border: 2px solid #ff5a5a; animation: pulse 1.6s ease-in-out infinite; }
+    .card-s.is_upcoming { border: 2px dashed var(--accent); }
+    .card-s.approx .d::before { content: "≈ "; }
+    .badge-l { position: absolute; top: 4px; left: 4px; background: #d92d2d; color: #fff; font-size: .7rem;
+               font-weight: 700; padding: 1px 5px; border-radius: 4px; }
+    .badge-u { position: absolute; top: 4px; left: 4px; background: var(--accent); color: var(--accent-ink);
+               font-size: .7rem; font-weight: 700; padding: 1px 5px; border-radius: 4px; }
+    .stem { position: absolute; width: 1px; background: var(--dim); z-index: 1; }
+    .stem.approx { background: none; border-left: 1px dashed var(--dim); }
+    @keyframes pulse { 50% { box-shadow: 0 0 0 4px rgba(255,90,90,.35); } }
+    @media (prefers-reduced-motion: reduce) { .card-s.is_live { animation: none; } .tl-scroll { scroll-behavior: auto; } }
+
+    /* --- detail + list --------------------------------------------------- */
+    .detail { display: grid; grid-template-columns: minmax(0, 320px) 1fr; gap: 1rem; margin-top: 1rem; }
+    .detail img { width: 100%; border-radius: 8px; aspect-ratio: 16/9; object-fit: cover; background: #000; }
+    .detail h3 { margin: 0 0 .4rem; font-size: 1.05rem; text-transform: none; letter-spacing: 0; color: var(--ink); }
+    .meta { color: var(--dim); font-size: .9rem; margin: .2rem 0 .7rem; }
+    @media (max-width: 640px) { .detail { grid-template-columns: 1fr; } }
+    table.list { width: 100%; border-collapse: collapse; font-size: .9rem; }
+    table.list th, table.list td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+    table.list th { color: var(--dim); font-weight: 600; }
+    .legend { display: flex; gap: 1rem; flex-wrap: wrap; font-size: .82rem; color: var(--dim); margin: .5rem 0 0; }
+    .legend i { display: inline-block; width: 14px; height: 10px; border-radius: 2px; vertical-align: middle; margin-right: 4px; }
+  </style>
+</head>
+<body>
+<header class="site">
+  <div class="wrap wide">
+    <h1>🎸 Encoreum</h1>
+    <div class="ver"><a class="btn ghost sm" href="/">← Downloads</a></div>
+  </div>
+</header>
+
+<main class="wrap wide">
+  <section class="card">
+    <h2>Live streams on a channel</h2>
+    <p class="dim">Paste a YouTube channel (URL, <code>@handle</code> or <code>UC…</code> id). You'll see what's
+      live now, what's scheduled, and past streams on one timeline. <b>Record</b>, <b>Schedule</b> and
+      <b>Download</b> open the normal download form with the link filled in, so you can check it with
+      Preview first.</p>
+    <form class="bar" id="scanForm">
+      <label class="dim" for="chan">Channel</label>
+      <input type="text" id="chan" name="channel" value="{{ channel }}" placeholder="https://www.youtube.com/@channel" autocomplete="off">
+      <button class="btn" id="scanBtn" type="submit">Find streams</button>
+    </form>
+    <div class="chips" id="picks" aria-label="Recent and watched channels"></div>
+    <p class="notice" id="status" role="status" aria-live="polite"></p>
+    <div class="progress" id="prog" hidden><i></i></div>
+    <div class="bar" id="moreBar" hidden>
+      <button class="btn ghost sm" id="moreBtn" type="button"></button>
+      <span class="dim sub" id="moreNote"></span>
+    </div>
+  </section>
+
+  <section class="card" id="tlCard" hidden>
+    <div class="bar" style="justify-content: space-between">
+      <h2 id="chanTitle" style="margin:0"></h2>
+      <div class="bar" style="margin:0">
+        <div class="seg" role="group" aria-label="Time range" id="ranges">
+          <button type="button" data-days="31">1 month</button>
+          <button type="button" data-days="92" aria-pressed="true">3 months</button>
+          <button type="button" data-days="366">1 year</button>
+          <button type="button" data-days="0">All</button>
+        </div>
+        <button class="btn ghost sm" type="button" id="toNow">Jump to now</button>
+      </div>
+    </div>
+    <div class="tl-scroll" id="tlScroll" tabindex="0" aria-label="Timeline of streams; scroll sideways">
+      <div class="tl-track" id="track"></div>
+    </div>
+    <div class="legend">
+      <span><i style="background:#d92d2d"></i>Live now</span>
+      <span><i style="border:2px dashed var(--accent)"></i>Upcoming</span>
+      <span><i style="background:var(--panel-2);border:1px solid var(--line)"></i>Past</span>
+      <span><i style="width:10px;height:10px;border-radius:50%;border:2px solid var(--dim)"></i>More streams (click a dot)</span>
+      <span>≈ date estimated from the stream's place in the list (exact dates fill in as they're looked up)</span>
+    </div>
+
+    <div class="detail" id="detail" hidden>
+      <img id="dImg" alt="">
+      <div>
+        <h3 id="dTitle"></h3>
+        <p class="meta" id="dMeta"></p>
+        <div class="bar" id="dActs"></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="card" id="listCard" hidden>
+    <h2>All streams (list)</h2>
+    <div style="overflow-x:auto">
+      <table class="list"><thead><tr><th>When</th><th>Status</th><th>Title</th><th>Length</th><th></th></tr></thead>
+        <tbody id="listBody"></tbody></table>
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const WATCHED = {{ watched|tojson }};
+const DAY = 86400;
+let data = null, poll = null, rangeDays = 92, selected = null;
+
+// ---------- formatting ----------
+const fmtDur = s => { if (!s) return ''; s = Math.round(s); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60);
+  return h ? `${h}h ${String(m).padStart(2, '0')}m` : `${m}m`; };
+const fmtDate = t => new Date(t * 1000).toLocaleDateString(undefined, {year: 'numeric', month: 'short', day: 'numeric'});
+const fmtWhen = t => new Date(t * 1000).toLocaleString(undefined, {weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'});
+function countdown(t) {
+  let s = t - Date.now() / 1000; if (s <= 0) return 'starting';
+  const d = Math.floor(s / DAY), h = Math.floor(s % DAY / 3600), m = Math.floor(s % 3600 / 60);
+  return d ? `in ${d}d ${h}h` : h ? `in ${h}h ${m}m` : `in ${m}m`;
+}
+const ytUrl = id => 'https://www.youtube.com/watch?v=' + encodeURIComponent(id);
+const views = v => v ? (v >= 1e6 ? (v / 1e6).toFixed(1) + 'M' : v >= 1e3 ? Math.round(v / 1e3) + 'k' : v) + ' views' : '';
+function label(s) {
+  if (s.status === 'is_live') return 'LIVE now';
+  if (s.status === 'is_upcoming') return s.approx ? 'Upcoming (time not announced)' : `${fmtWhen(s.t)} · ${countdown(s.t)}`;
+  return (s.approx ? '≈ ' : '') + fmtDate(s.t);
+}
+
+// ---------- channel picks ----------
+async function loadPicks() {
+  let recent = [];
+  try { recent = (await (await fetch('/api/streams/channels')).json()).channels || []; } catch (e) {}
+  const seen = new Set(), box = $('picks'); box.textContent = '';
+  for (const c of [...recent, ...WATCHED]) {
+    if (!c.channel_id || seen.has(c.channel_id)) continue; seen.add(c.channel_id);
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'btn ghost sm'; b.textContent = c.channel || c.channel_id;
+    b.title = c.finished ? 'Scanned ' + new Date(c.finished * 1000).toLocaleString() : 'Watched channel';
+    b.onclick = () => openChannel(c.channel_id, !!c.finished);
+    box.appendChild(b);
+  }
+}
+async function openChannel(cid, cached) {
+  $('chan').value = 'https://www.youtube.com/channel/' + cid;
+  if (cached) {
+    try { const r = await fetch('/api/streams/channel/' + cid); if (r.ok) { data = await r.json(); render(); return; } } catch (e) {}
+  }
+  scan(false);
+}
+
+// ---------- scanning ----------
+async function scan(more) {
+  const body = new URLSearchParams({channel: $('chan').value.trim(), more: more ? '1' : ''});
+  if (!body.get('channel')) { $('chan').focus(); return; }
+  $('status').className = 'notice'; $('status').textContent = 'Starting…';
+  let j;
+  try { const r = await fetch('/api/streams/scan', {method: 'POST', body}); j = await r.json();
+        if (!r.ok) throw new Error(j.detail || r.statusText); }
+  catch (e) { $('status').className = 'notice bad'; $('status').textContent = e.message; return; }
+  if (j.ok === false) { $('status').className = 'notice bad'; $('status').textContent = j.message; return; }
+  refresh();
+}
+async function refresh() {
+  try { data = await (await fetch('/api/streams/scan')).json(); } catch (e) { return; }
+  render();
+  clearTimeout(poll);
+  if (data.state === 'running') poll = setTimeout(refresh, 1500); else loadPicks();
+}
+$('scanForm').addEventListener('submit', e => { e.preventDefault(); scan(false); });
+$('moreBtn').addEventListener('click', () => scan(true));
+
+// ---------- rendering ----------
+function render() {
+  const d = data || {}, st = $('status'), running = d.state === 'running';
+  const streams = d.streams || [];
+  const n = k => streams.filter(s => s.status === k).length;
+  $('scanBtn').disabled = $('moreBtn').disabled = running;
+  $('prog').hidden = !running;
+  if (running) {
+    const [a, b] = d.progress || [0, 0];
+    st.className = 'notice';
+    st.textContent = `${d.channel || ''}: ${d.phase || 'working'}${b ? ` (${a} of ${b})` : ''}… ${streams.length} stream(s) so far.`;
+    $('prog').firstElementChild.style.width = b ? (100 * a / b) + '%' : '15%';
+  } else if (d.state === 'error') {
+    st.className = 'notice bad'; st.textContent = 'Scan failed: ' + (d.error || 'unknown error');
+  } else if (d.channel_id) {
+    st.className = 'notice';
+    st.textContent = `${d.channel}: ${n('is_live')} live now, ${n('is_upcoming')} upcoming, ${n('was_live')} past.` +
+      (d.finished ? ` Scanned ${new Date(d.finished * 1000).toLocaleString()}.` : '');
+    for (const note of d.notes || []) st.textContent += ' ' + note;
+    if (!streams.length) st.textContent += d.mode === 'uploads'
+      ? ` No live streams among the ${d.uploads_checked || 0} newest uploads. "Check 50 more uploads" looks further back.`
+      : ' No live streams found on this channel.';
+  } else { st.textContent = ''; }
+
+  // "Scan more": more uploads (no Live tab) or more dates (Live tab).
+  const mb = $('moreBar');
+  if (!running && d.channel_id && d.mode) {
+    mb.hidden = false;
+    if (d.mode === 'uploads') {
+      $('moreBtn').textContent = 'Check 50 more uploads';
+      $('moreNote').textContent = `${d.uploads_checked || 0} uploads checked so far. About 2 minutes per 50 (YouTube rate limit).`;
+    } else {
+      const left = streams.filter(s => s.status === 'was_live' && !s.when).length;
+      mb.hidden = !left;
+      $('moreBtn').textContent = 'Look up 50 more dates';
+      $('moreNote').textContent = `${left} past stream(s) still have estimated (≈) dates.`;
+    }
+  } else if (!running) mb.hidden = true;
+
+  $('tlCard').hidden = $('listCard').hidden = !streams.length;
+  $('chanTitle').textContent = d.channel || '';
+  if (streams.length) { drawTimeline(streams); drawList(streams); }
+}
+
+function drawTimeline(streams) {
+  const box = $('tlScroll'), track = $('track'), W = box.clientWidth;
+  const now = Date.now() / 1000;
+  const ts = streams.map(s => s.t);
+  const lo = Math.min(...ts, now) - 3 * DAY, hi = Math.max(...ts, now) + 3 * DAY;
+  const span = hi - lo;
+  const pxPerSec = rangeDays ? W / (rangeDays * DAY) : W / span;
+  const width = Math.max(W, Math.ceil(span * pxPerSec) + 160);
+  const x = t => 20 + (t - lo) * pxPerSec;
+  track.textContent = '';
+  track.style.width = width + 'px';
+
+  // Placement: up to MAX_LANES rows of cards; whatever doesn't fit becomes a
+  // dot on a strip above the axis, so 400 streams stay one screen tall.
+  // Live, upcoming and the NEWEST past streams claim card slots first.
+  const CARD = 128, GAP = 8, LANE_H = 128, MAX_LANES = 4, DOT = 14;
+  const lanes = Array.from({length: MAX_LANES}, () => []), dotLanes = [];
+  const fits = (occ, l, r) => occ.every(([a, b]) => r + GAP <= a || l >= b + GAP);
+  const rank = s => s.status === 'is_live' ? 0 : s.status === 'is_upcoming' ? 1 : 2;
+  const order = [...streams].sort((a, b) => rank(a) - rank(b) || (a.approx - b.approx) || b.t - a.t);
+  const placed = [], dots = [];
+  for (const s of order) {
+    const left = Math.min(Math.max(4, x(s.t) - CARD / 2), width - CARD - 4);
+    const lane = lanes.findIndex(occ => fits(occ, left, left + CARD));
+    if (lane >= 0) { lanes[lane].push([left, left + CARD]); placed.push({s, left, lane}); continue; }
+    const cx = x(s.t) - DOT / 2;
+    let dl = dotLanes.findIndex(occ => fits(occ, cx, cx + DOT));
+    if (dl < 0) { dotLanes.push([]); dl = dotLanes.length - 1; }
+    dotLanes[dl].push([cx, cx + DOT]); dots.push({s, cx, dl});
+  }
+  const used = lanes.filter(l => l.length).length;
+  const dotH = dotLanes.length * DOT + (dotLanes.length ? 8 : 0);
+  const H = 26 + used * LANE_H + dotH + 36;
+  track.style.height = H + 'px';
+  const axisTop = H - 30;
+
+  // Axis ticks: months (years emphasised); weeks when zoomed to a month.
+  const axis = document.createElement('div'); axis.className = 'tl-axis'; track.appendChild(axis);
+  const start = new Date(lo * 1000); start.setDate(1); start.setHours(0, 0, 0, 0);
+  const step = rangeDays && rangeDays <= 31 ? 'week' : 'month';
+  for (let dt = new Date(start); dt.getTime() / 1000 < hi; ) {
+    const t = dt.getTime() / 1000;
+    if (t >= lo) {
+      const tk = document.createElement('div');
+      tk.className = 'tick' + (dt.getMonth() === 0 && dt.getDate() === 1 ? ' year' : '');
+      tk.style.left = x(t) + 'px';
+      tk.textContent = step === 'week' ? dt.toLocaleDateString(undefined, {month: 'short', day: 'numeric'})
+        : dt.toLocaleDateString(undefined, dt.getMonth() === 0 ? {year: 'numeric', month: 'short'} : {month: 'short'});
+      axis.appendChild(tk);
+    }
+    if (step === 'week') dt.setDate(dt.getDate() + 7); else dt.setMonth(dt.getMonth() + 1);
+  }
+
+  for (const {s, cx, dl} of dots) {
+    const d = document.createElement('button');
+    d.type = 'button'; d.className = `dot ${s.status}` + (s.approx && s.status === 'was_live' ? ' approx' : '');
+    d.style.left = cx + 'px'; d.style.top = (axisTop - 4 - (dl + 1) * DOT) + 'px';
+    d.title = `${s.title} · ${label(s)}`; d.setAttribute('aria-label', `${s.title}. ${label(s)}`);
+    d.onclick = () => select(s);
+    track.appendChild(d);
+  }
+  for (const {s, left, lane} of placed) {
+    const top = 26 + lane * LANE_H;
+    const stem = document.createElement('div');
+    stem.className = 'stem' + (s.approx ? ' approx' : '');
+    stem.style.left = x(s.t) + 'px'; stem.style.top = (top + 120) + 'px'; stem.style.height = Math.max(0, axisTop - top - 120) + 'px';
+    track.appendChild(stem);
+
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = `card-s ${s.status}` + (s.approx && s.status === 'was_live' ? ' approx' : '');
+    b.style.left = left + 'px'; b.style.top = top + 'px';
+    b.setAttribute('aria-label', `${s.title}. ${label(s)}`);
+    const img = document.createElement('img'); img.loading = 'lazy'; img.alt = ''; img.src = s.thumb || '';
+    const t = document.createElement('span'); t.className = 't'; t.textContent = s.title;
+    const dd = document.createElement('span'); dd.className = 'd';
+    dd.textContent = s.status === 'is_upcoming' ? (s.approx ? 'time TBA' : countdown(s.t))
+                   : s.status === 'is_live' ? 'now' : fmtDate(s.t) + (s.duration ? ' · ' + fmtDur(s.duration) : '');
+    b.append(img, t, dd);
+    if (s.status === 'is_live' || s.status === 'is_upcoming') {
+      const bd = document.createElement('span');
+      bd.className = s.status === 'is_live' ? 'badge-l' : 'badge-u';
+      bd.textContent = s.status === 'is_live' ? 'LIVE' : 'SOON';
+      b.appendChild(bd);
+    }
+    b.onclick = () => select(s);
+    track.appendChild(b);
+  }
+  const nowEl = document.createElement('div'); nowEl.className = 'now'; nowEl.style.left = x(now) + 'px';
+  const nl = document.createElement('span'); nl.textContent = 'NOW'; nowEl.appendChild(nl);
+  track.appendChild(nowEl);
+  track.dataset.nowX = x(now);
+  if (!track.dataset.scrolled) { jumpToNow(); track.dataset.scrolled = '1'; }
+  if (selected) { const s = streams.find(v => v.id === selected); if (s) select(s, true); }
+}
+function jumpToNow() {
+  const box = $('tlScroll'), nx = +$('track').dataset.nowX || 0;
+  // Instant, not smooth: on a years-wide track a smooth scroll crawls.
+  box.scrollTo({left: Math.max(0, nx - box.clientWidth * 0.62), behavior: 'instant'});  // a little future visible
+}
+$('toNow').onclick = jumpToNow;
+document.querySelectorAll('#ranges button').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('#ranges button').forEach(o => o.setAttribute('aria-pressed', String(o === b)));
+  rangeDays = +b.dataset.days; $('track').dataset.scrolled = ''; render();
+}));
+window.addEventListener('resize', () => { if (data && (data.streams || []).length) render(); });
+
+// ---------- detail + actions ----------
+function actionsFor(s) {
+  const acts = [];
+  if (s.status === 'is_live') acts.push(['Record', `/?url=${encodeURIComponent(ytUrl(s.id))}&live=1`, true]);
+  else if (s.status === 'is_upcoming') acts.push(['Schedule recording', `/?url=${encodeURIComponent(ytUrl(s.id))}&live=1`, true]);
+  else acts.push(['Download', `/?url=${encodeURIComponent(ytUrl(s.id))}`, true]);
+  acts.push(['Open on YouTube', ytUrl(s.id), false]);
+  return acts;
+}
+function select(s, quiet) {
+  selected = s.id;
+  $('detail').hidden = false;
+  $('dImg').src = s.thumb || '';
+  $('dTitle').textContent = s.title;
+  const bits = [label(s), fmtDur(s.duration), views(s.views)].filter(Boolean);
+  if (s.status === 'was_live' && s.approx) bits.push('date estimated');
+  $('dMeta').textContent = bits.join(' · ');
+  const acts = $('dActs'); acts.textContent = '';
+  for (const [txt, href, primary] of actionsFor(s)) {
+    const a = document.createElement('a'); a.className = primary ? 'btn sm' : 'btn ghost sm';
+    a.href = href; a.textContent = txt;
+    if (!primary) { a.target = '_blank'; a.rel = 'noopener'; }
+    acts.appendChild(a);
+  }
+  if (!quiet) $('detail').scrollIntoView({block: 'nearest'});
+}
+
+function drawList(streams) {
+  const tb = $('listBody'); tb.textContent = '';
+  const order = {is_live: 0, is_upcoming: 1, was_live: 2};
+  for (const s of [...streams].sort((a, b) => order[a.status] - order[b.status] || b.t - a.t)) {
+    const tr = document.createElement('tr');
+    const cells = [label(s), {is_live: 'Live', is_upcoming: 'Upcoming', was_live: 'Past'}[s.status] || s.status, s.title, fmtDur(s.duration)];
+    for (const c of cells) { const td = document.createElement('td'); td.textContent = c; tr.appendChild(td); }
+    const td = document.createElement('td');
+    const [txt, href] = actionsFor(s)[0];
+    const a = document.createElement('a'); a.href = href; a.textContent = txt; td.appendChild(a);
+    tr.appendChild(td); tb.appendChild(tr);
+  }
+}
+
+// Countdowns tick without a rescan.
+setInterval(() => { if (data && (data.streams || []).some(s => s.status === 'is_upcoming')) render(); }, 30000);
+
+loadPicks();
+{% if channel %}scan(false);{% else %}refresh();{% endif %}
+</script>
+</body>
+</html>

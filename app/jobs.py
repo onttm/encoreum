@@ -293,6 +293,15 @@ def get_job(job_id: str) -> dict | None:
     return dict(row) if row else None
 
 
+def managed_show_dirs() -> list[str]:
+    """Show folders Encoreum's VIDEO jobs wrote to (for plexlib's season
+    retitling: it must only touch shows this app manages)."""
+    from . import presets
+    with _connect() as conn:
+        rows = conn.execute("SELECT DISTINCT naming, show_dir FROM jobs WHERE show_dir IS NOT NULL").fetchall()
+    return sorted({r[1] for r in rows if r[0] not in presets.AUDIO_NAMES})
+
+
 def list_jobs(limit: int = 100) -> list[dict]:
     with _db_lock, _connect() as conn:
         rows = conn.execute(

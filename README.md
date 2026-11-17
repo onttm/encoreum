@@ -62,6 +62,10 @@ endpoint above is how you verify it.
 - **Won't scramble a show.** If a show is already organised one way, a job in a
   different naming mode adds its new files in the existing layout instead of
   moving every episode (Preview warns you first).
+- **Seasons show as years.** Plex labels every season "Season 2026" no matter
+  what the metadata says; Encoreum retitles the seasons of shows it downloaded
+  to just "2026" (locked, so a refresh keeps it). Other libraries are never
+  touched. Turn it off with `PLEX_YEAR_SEASON_TITLES=0`.
 - A safety guardrail: the app will only ever write inside the folder you give it.
 
 ## Add-ons
@@ -226,6 +230,26 @@ Add `--play-selector 'CSS'` if a site's Play button isn't found. Tests, against 
 site: `docker run --rm -v "$PWD/tests:/tests:ro" --entrypoint python3 encoreum:local /tests/test_page_capture.py`
 
 ---
+
+## Finding a channel's live streams
+
+Open **Streams** (top right) and paste a YouTube channel (URL, `@handle` or
+`UC…` id). You get one timeline: past streams on the left, a **NOW** line, and
+scheduled streams on the right with countdowns. Click any card (or dot) for
+details and an action:
+
+- **Live now → Record**, **Upcoming → Schedule recording** (the job waits until
+  the stream starts), **Past → Download**. Each opens the normal download form
+  with the link filled in, so Preview and your naming choices still apply.
+
+How it finds them: it reads the channel's **Live** tab in one go (titles,
+thumbnails, lengths, live/upcoming/past). That tab doesn't include dates, so
+the newest streams get exact dates from the channel's feed and a few lookups;
+older ones are placed by their order and marked **≈** until **Look up 50 more
+dates** fills them in. Channels without a Live tab have their newest 50 uploads
+checked one by one (about 2 minutes); **Check 50 more uploads** goes further
+back. Lookups share Encoreum's YouTube rate limit, and results are remembered
+per channel so reopening one is instant. No YouTube account is needed.
 
 ## Chapters and sponsor segments
 

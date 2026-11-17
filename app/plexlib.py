@@ -171,3 +171,71 @@ def unwatched_older_than(section_key: str, days: int = 180) -> list[dict]:
     cutoff = time.time() - days * 86400
     return [i for i in watch_state(section_key)
             if i["never_watched"] and i["added_at"] and i["added_at"] < cutoff]
+
+
+# --- season titles: "Season 2026" -> "2026" (added 2026-11-16) ------------------
+# Plex ignores the <title> in our season.nfo and always shows "Season <n>". The
+# fix that sticks is editing the season's title in Plex and LOCKING it (verified
+# on PMS 1.43.5: survives a forced metadata refresh; the season keeps its
+# ratingKey, so nothing is re-added). Scope is deliberately narrow because other
+# show libraries (TV, YouTube) rightly use "Season 1":
+#   * only shows Encoreum itself downloaded (managed_dirs, from job history);
+#   * only titles still at Plex's default "Season <year>", year 1900-2100;
+#   * never a locked/hand-set title.
+# PLEX_YEAR_SEASON_TITLES=0 turns it off.
+import re as _re
+
+YEAR_SEASON_TITLES = os.environ.get("PLEX_YEAR_SEASON_TITLES", "1").strip().lower() not in ("0", "false", "no", "off")
+_DEFAULT_SEASON = _re.compile(r"^Season (\d{4})$")
+
+
+def _put(path: str, **params) -> bool:
+    tok = _token()
+    if not tok:
+        return False
+    params["X-Plex-Token"] = tok
+    req = urllib.request.Request(f"{PLEX_URL}{path}?{urllib.parse.urlencode(params)}", method="PUT")
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r:
+            return 200 <= r.status < 300
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def retitle_year_seasons(managed_dirs, dry_run: bool = False) -> dict:
+    """Retitle default "Season <year>" seasons to "<year>" for managed shows."""
+    out = {"enabled": YEAR_SEASON_TITLES, "retitled": [], "skipped_locked": 0, "shows_matched": 0}
+    if not YEAR_SEASON_TITLES or not _token():
+        return out
+    managed = {str(Path(d).resolve()) for d in managed_dirs if d}
+    for sec in sections():
+        if sec["type"] != "show" or not sec["reachable"]:
+            continue
+        root = _get(f"/library/sections/{sec['key']}/all")
+        for show in (root.findall("Directory") if root is not None else []):
+            detail = _get(f"/library/metadata/{show.get('ratingKey')}")
+            node = detail.find("Directory") if detail is not None else None
+            paths = [l.get("path") for l in (node.findall("Location") if node is not None else [])]
+            local = {str(Path(p).resolve()) for p in (map_plex_path(x) for x in paths) if p}
+            if not (local & managed):
+                continue
+            out["shows_matched"] += 1
+            kids = _get(f"/library/metadata/{show.get('ratingKey')}/children")
+            for season in (kids.findall("Directory") if kids is not None else []):
+                m = _DEFAULT_SEASON.match(season.get("title") or "")
+                if not m or not 1900 <= int(m.group(1)) <= 2100:
+                    continue
+                # The children listing can omit Field locks; read the season itself.
+                sd = _get(f"/library/metadata/{season.get('ratingKey')}")
+                sn = sd.find("Directory") if sd is not None else None
+                locked = {f.get("name") for f in (sn.findall("Field") if sn is not None else [])
+                          if f.get("locked") == "1"}
+                if "title" in locked:
+                    out["skipped_locked"] += 1
+                    continue
+                if dry_run:
+                    out["retitled"].append(f"{show.get('title')} {m.group(1)} (dry run)")
+                elif _put(f"/library/metadata/{season.get('ratingKey')}",
+                        **{"title.value": m.group(1), "title.locked": "1"}):
+                    out["retitled"].append(f"{show.get('title')} {m.group(1)}")
+    return out

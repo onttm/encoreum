@@ -1656,6 +1656,51 @@ it on. Retries (`jobs.retry_job`) bypass the check on purpose so old jobs
 still work. The core is live music; the `music` preset is NOT an add-on. On
 the host, Audiobook was switched on (19 jobs used it); Podcast left off (1 test).
 
+## Season titles "Season 2026" -> "2026" (2026-11-16)
+
+Plex ignores `<title>` in season.nfo (ours already says `2026`) and folder
+names don't matter (Band C's bare `2023/` folder still showed "Season 2023").
+What sticks: `PUT /library/metadata/{season}` with `title.value=2026` +
+`title.locked=1` — verified on PMS 1.43.5 to survive a forced refresh, same
+ratingKey (nothing re-added). `plexlib.retitle_year_seasons()` runs every 30
+min (APScheduler `plex-season-titles`) over ONLY shows Encoreum's video jobs
+wrote to (`jobs.managed_show_dirs()`), ONLY default `Season <1900-2100>`
+titles, never locked ones; `dry_run=True` previews. First run: 15 seasons in
+9 Concerts shows; TV Shows untouched. Off: `PLEX_YEAR_SEASON_TITLES=0`.
+Undo per season: unlock the title in Plex Web and refresh.
+
+## Streams page: a channel's live streams on a timeline (2026-11-16)
+
+`app/streamscan.py` + `templates/streams.html`, `/streams` (browse to view,
+request rights to scan because it spends the shared YouTube budget).
+Read-only: Record/Schedule/Download open `/?url=…[&live=1]`, the same prefill
+the bookmarklet uses, so Preview and naming apply and a scheduled one parks
+via the existing `is_upcoming` wait.
+
+Measured facts it is built on:
+- **A Live tab (`/streams`) flat listing** returns hundreds of entries in
+  one call with id/title/thumbnail/duration/views/live_status but **no
+  dates** (NASA: 400 entries, 2 is_live + 398 was_live, 0 dated).
+- **Some channels have no Live tab** (Live Show TV: "This channel does
+  not have a streams tab"). Fallback checks the newest 50 uploads one by one
+  (~170 s) and keeps is_live/is_upcoming/was_live; on Live Show TV all 50 were
+  `not_live` (premiered "Full Episodes" are not streams), so 0 is correct.
+- Dates: RSS gives the newest ~15 free; per-video `--print` lookups (each an
+  InnerTube call through `ratelimit.acquire("youtube")` — its first real
+  user) fill upcoming start times and the 25 newest undated streams; "Scan
+  more" does 50 more. Undated ones are placed by Live-tab ORDER between
+  dated neighbours (`place()`), flagged `approx` and drawn dashed with "≈".
+  Bug found by screenshot: items newer than the newest dated one were
+  clamped to now−1h and piled up; they are now spread evenly up to now.
+- Results cached per channel in `/config/streamscan/<UC…>.json`.
+
+UI lessons from real-browser screenshots: the NOW line sat on top of the
+live cards (they're placed AT now) and swallowed clicks → `pointer-events:
+none` + behind cards; lanes are capped at 4 rows of cards and the rest
+become dots above the axis (else 400 streams = a page-tall column); live,
+upcoming and newest streams claim card slots first; the first jump to NOW
+must be instant (a smooth scroll across years-wide track crawls).
+
 ## Public repo = a scrubbed snapshot (2026-11-16)
 
 Two repos on purpose. **This one** (`onttm/encoreum`) keeps the full

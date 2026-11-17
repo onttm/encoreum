@@ -20,7 +20,7 @@ from fastapi.templating import Jinja2Templates
 
 from . import (auth, captures, catalog, config, discovery, history, imports, jobs,
                library, pipeline, plexlib, presets, preview, ratelimit, schedule,
-               secrets, setlistfm, settings, sponsorblock, updater)
+               secrets, setlistfm, settings, sponsorblock, streamscan, updater)
 
 BASE = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(BASE / "templates"))
@@ -87,6 +87,13 @@ def _startup() -> None:
                        id="setlist-enrich", jitter=600, coalesce=True,
                        max_instances=1,
                        next_run_time=datetime.now() + timedelta(minutes=3))
+    # Plex shows "Season 2026" whatever season.nfo says; retitle managed shows'
+    # default year seasons to "2026" (plexlib.retitle_year_seasons). Every 30 min
+    # so a season Plex adds after a job's scan gets fixed soon after; first run
+    # shortly after startup. Off with PLEX_YEAR_SEASON_TITLES=0.
+    _scheduler.add_job(lambda: plexlib.retitle_year_seasons(jobs.managed_show_dirs()),
+                       "interval", minutes=30, id="plex-season-titles", jitter=120,
+                       next_run_time=datetime.now() + timedelta(minutes=2))
     _scheduler.start()
 
 
@@ -1024,6 +1031,49 @@ def review_page(request: Request):
     # Newer Starlette signature: (request, name, context). The legacy
     # (name, {"request": ...}) form fails with "unhashable type: dict" here.
     return templates.TemplateResponse(request, "review.html", {})
+
+
+# --- live-stream finder (see streamscan.py) ----------------------------------
+
+@app.get("/streams", response_class=HTMLResponse)
+def streams_page(request: Request):
+    """A channel's live streams on a timeline: live now, upcoming, past."""
+    _require(request, "browse")
+    watched = [{"channel_id": s.get("channel_id"), "channel": s.get("title") or s.get("show") or ""}
+               for s in catalog.list_sources() if s.get("channel_id")]
+    return templates.TemplateResponse(request, "streams.html", {
+        "watched": watched, "channel": request.query_params.get("channel", "")})
+
+
+@app.post("/api/streams/scan")
+def api_streams_scan(request: Request, channel: str = Form(...), more: str = Form("")):
+    """Start (or extend, with more=1) a scan. Spends the shared YouTube budget,
+    so it needs request rights, not just browse."""
+    _require(request, "request")
+    return streamscan.start(channel, more=_truthy(more))
+
+
+@app.get("/api/streams/scan")
+def api_streams_status(request: Request):
+    _require(request, "browse")
+    return streamscan.status()
+
+
+@app.get("/api/streams/channels")
+def api_streams_channels(request: Request):
+    _require(request, "browse")
+    return {"channels": streamscan.channels()}
+
+
+@app.get("/api/streams/channel/{channel_id}")
+def api_streams_channel(request: Request, channel_id: str):
+    _require(request, "browse")
+    if not _re.fullmatch(r"UC[A-Za-z0-9_-]{22}", channel_id):
+        raise HTTPException(400, "Not a channel id.")
+    s = streamscan.load(channel_id)
+    if not s:
+        raise HTTPException(404, "Not scanned yet.")
+    return s
 
 
 # --- sponsor segments (SponsorBlock: external, free, opt-in; see sponsorblock.py)
